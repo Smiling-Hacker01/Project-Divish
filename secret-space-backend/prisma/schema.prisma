@@ -1,0 +1,146 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  fcmToken     String?  @map("fcm_token")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  // Relations
+  coupleAsA        Couple?          @relation("UserA")
+  coupleAsB        Couple?          @relation("UserB")
+  faceDescriptor   FaceDescriptor?
+  diaryEntries     DiaryEntry[]
+  diaryReactions   DiaryReaction[]
+  moods            Mood[]
+  createdCoupons   Coupon[]         @relation("CouponCreator")
+  receivedCoupons  Coupon[]         @relation("CouponRecipient")
+  vaultFiles       VaultFile[]
+  loveReasons      LoveReason[]
+
+  @@map("users")
+}
+
+model Couple {
+  id              String    @id @default(uuid())
+  userA           User      @relation("UserA", fields: [userAId], references: [id])
+  userAId         String    @unique @map("user_a_id")
+  userB           User?     @relation("UserB", fields: [userBId], references: [id])
+  userBId         String?   @unique @map("user_b_id")
+  coupleCode      String    @unique @map("couple_code")
+  anniversaryDate DateTime? @map("anniversary_date") @db.Date
+  lovebotMode     String    @default("off") @map("lovebot_mode")
+  lovebotTime     String    @default("09:00") @map("lovebot_time")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  status          String    @default("waiting") // waiting | active
+
+  // Relations
+  diaryEntries DiaryEntry[]
+  moods        Mood[]
+  coupons      Coupon[]
+  loveReasons  LoveReason[]
+
+  @@map("couples")
+}
+
+model FaceDescriptor {
+  id         String   @id @default(uuid())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String   @unique @map("user_id")
+  descriptor Float[]
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("face_descriptors")
+}
+
+model DiaryEntry {
+  id        String   @id @default(uuid())
+  couple    Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+  coupleId  String   @map("couple_id")
+  author    User     @relation(fields: [authorId], references: [id])
+  authorId  String   @map("author_id")
+  type      String   // text | image | video
+  content   String?
+  mediaUrl  String?  @map("media_url")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  reactions DiaryReaction[]
+
+  @@map("diary_entries")
+}
+
+model DiaryReaction {
+  id          String   @id @default(uuid())
+  entry       DiaryEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  entryId     String   @map("entry_id")
+  user        User     @relation(fields: [userId], references: [id])
+  userId      String   @map("user_id")
+  type        String   // heart | comment
+  commentText String?  @map("comment_text")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("diary_reactions")
+}
+
+model Mood {
+  id        String   @id @default(uuid())
+  couple    Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+  coupleId  String   @map("couple_id")
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String   @map("user_id")
+  mood      String   // happy | grumpy | low | productive | missing_you
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([coupleId, userId])
+  @@map("moods")
+}
+
+model Coupon {
+  id          String    @id @default(uuid())
+  couple      Couple    @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+  coupleId    String    @map("couple_id")
+  creator     User      @relation("CouponCreator", fields: [creatorId], references: [id])
+  creatorId   String    @map("creator_id")
+  recipient   User      @relation("CouponRecipient", fields: [recipientId], references: [id])
+  recipientId String    @map("recipient_id")
+  title       String
+  description String?
+  status      String    @default("active") // active | pending | used | expired
+  expiresAt   DateTime? @map("expires_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@map("coupons")
+}
+
+model LoveReason {
+  id        String  @id @default(uuid())
+  couple    Couple  @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+  coupleId  String  @map("couple_id")
+  forUser   User    @relation(fields: [forUserId], references: [id])
+  forUserId String  @map("for_user_id")
+  reason    String
+  used      Boolean @default(false)
+
+  @@map("love_reasons")
+}
+
+model VaultFile {
+  id           String   @id @default(uuid())
+  owner        User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId      String   @map("owner_id")
+  fileUrl      String   @map("file_url")
+  fileType     String   @map("file_type") // image | video
+  thumbnailUrl String?  @map("thumbnail_url")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("vault_files")
+}
