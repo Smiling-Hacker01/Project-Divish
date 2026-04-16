@@ -25,7 +25,8 @@ model User {
   createdCoupons   Coupon[]         @relation("CouponCreator")
   receivedCoupons  Coupon[]         @relation("CouponRecipient")
   vaultFiles       VaultFile[]
-  loveReasons      LoveReason[]
+  authoredReasons  LoveReason[]     @relation("ReasonAuthor")
+  receivedReasons  LoveReason[]     @relation("ReasonRecipient")
 
   @@map("users")
 }
@@ -38,8 +39,15 @@ model Couple {
   userBId         String?   @unique @map("user_b_id")
   coupleCode      String    @unique @map("couple_code")
   anniversaryDate DateTime? @map("anniversary_date") @db.Date
-  lovebotMode     String    @default("off") @map("lovebot_mode")
-  lovebotTime     String    @default("09:00") @map("lovebot_time")
+  // User A Settings
+  userALoveBotMode String @default("off") @map("user_a_lovebot_mode") // off | daily | surprise
+  userALoveBotTime String @default("09:00") @map("user_a_lovebot_time")
+  
+  // User B Settings
+  userBAccessGranted Boolean @default(false) @map("user_b_access_granted")
+  userBLoveBotMode   String @default("off") @map("user_b_lovebot_mode")
+  userBLoveBotTime   String @default("09:00") @map("user_b_lovebot_time")
+  couplePhoto     String?   @map("couple_photo")
   createdAt       DateTime  @default(now()) @map("created_at")
   status          String    @default("waiting") // waiting | active
 
@@ -122,13 +130,17 @@ model Coupon {
 }
 
 model LoveReason {
-  id        String  @id @default(uuid())
-  couple    Couple  @relation(fields: [coupleId], references: [id], onDelete: Cascade)
-  coupleId  String  @map("couple_id")
-  forUser   User    @relation(fields: [forUserId], references: [id])
-  forUserId String  @map("for_user_id")
-  reason    String
-  used      Boolean @default(false)
+  id          String    @id @default(uuid())
+  couple      Couple    @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+  coupleId    String    @map("couple_id")
+  author      User      @relation("ReasonAuthor", fields: [authorId], references: [id])
+  authorId    String    @map("author_id")
+  forUser     User      @relation("ReasonRecipient", fields: [forUserId], references: [id])
+  forUserId   String    @map("for_user_id")
+  reason      String
+  used        Boolean   @default(false)
+  deliveredAt DateTime? @map("delivered_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
 
   @@map("love_reasons")
 }

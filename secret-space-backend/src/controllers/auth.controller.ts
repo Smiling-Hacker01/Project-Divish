@@ -42,6 +42,40 @@ const generateUniqueCoupleCode = async (): Promise<string> => {
   throw new Error('Failed to generate a unique couple code after retries');
 };
 
+// ── Helper: Populate full User object for frontend AuthContext ─────────────────
+const getPopulatedUser = async (userId: string) => {
+  const account = await prisma.user.findUnique({ where: { id: userId } });
+  if (!account) throw new Error('User not found');
+
+  const couple = await prisma.couple.findFirst({
+    where: { OR: [{ userAId: userId }, { userBId: userId }] }
+  });
+
+  const isCreator = couple?.userAId === userId;
+  const partnerId = isCreator ? couple?.userBId : couple?.userAId;
+  let partnerName: string | undefined;
+
+  if (partnerId) {
+    const p = await prisma.user.findUnique({ where: { id: partnerId }, select: { name: true } });
+    if (p) partnerName = p.name;
+  }
+
+  const hasFace = !!(await prisma.faceDescriptor.findUnique({ where: { userId } }));
+
+  return {
+    id: account.id,
+    name: account.name,
+    email: account.email,
+    coupleCode: couple?.coupleCode,
+    isCreator,
+    partnerId,
+    partnerName,
+    faceMFAEnabled: hasFace,
+    anniversaryDate: couple?.anniversaryDate?.toISOString().split('T')[0],
+    coupleStatus: couple?.status
+  };
+};
+
 // ── POST /api/auth/signup ──────────────────────────────────────────────────────
 export const signup = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -50,9 +84,16 @@ export const signup = async (req: Request, res: Response, next: NextFunction): P
       res.status(400).json({ error: parsed.error.issues[0].message });
       return;
     }
-    const { name, email, password } = parsed.data;
+    const { name, email, password, anniversaryDate } = parsed.data;
+
+    logger.info({ email, passwordLength: password.length }, '[Auth][DEBUG] Signup - hashing password');
 
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+
+    // Immediately verify the hash is correct (debug safety check)
+    const verifyHash = await bcrypt.compare(password, passwordHash);
+    logger.info({ verifyHash, hashPrefix: passwordHash.substring(0, 7) }, '[Auth][DEBUG] Signup - hash verification');
+
     const coupleCode = await generateUniqueCoupleCode();
 
     // Use transaction for atomicity — catches P2002 if email already exists
@@ -61,7 +102,11 @@ export const signup = async (req: Request, res: Response, next: NextFunction): P
         data: { name, email, passwordHash },
       });
       await tx.couple.create({
-        data: { userAId: newUser.id, coupleCode },
+        data: {
+          userAId: newUser.id,
+          coupleCode,
+          anniversaryDate: anniversaryDate ? new Date(anniversaryDate) : undefined,
+        },
       });
       return newUser;
     });
@@ -71,11 +116,13 @@ export const signup = async (req: Request, res: Response, next: NextFunction): P
 
     logger.info({ userId: user.id }, '[Auth] New user signed up');
 
+    const populatedUser = await getPopulatedUser(user.id);
+
     res.status(201).json({
       message: 'Account created. Please enroll your face or verify via OTP to get full access.',
       coupleCode,
       tempToken,
-      user: { id: user.id, name: user.name, email: user.email },
+      user: populatedUser,
     });
   } catch (err: any) {
     if (err?.code === 'P2002') {
@@ -116,7 +163,7 @@ export const join = async (req: Request, res: Response, next: NextFunction): Pro
       });
       await tx.couple.update({
         where: { id: couple.id },
-        data: { userBId: newUser.id },
+        data: { userBId: newUser.id, status: 'active' },
       });
       return newUser;
     });
@@ -126,10 +173,12 @@ export const join = async (req: Request, res: Response, next: NextFunction): Pro
 
     logger.info({ userId: user.id, coupleCode }, '[Auth] User joined couple');
 
+    const populatedUser = await getPopulatedUser(user.id);
+
     res.status(201).json({
       message: 'Joined couple. Please enroll your face or verify via OTP to get full access.',
       tempToken,
-      user: { id: user.id, name: user.name, email: user.email },
+      user: populatedUser,
     });
   } catch (err: any) {
     if (err?.code === 'P2002') {
@@ -151,13 +200,19 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
     }
     const { email, password } = parsed.data;
 
+    logger.info({ email, passwordLength: password?.length }, '[Auth][DEBUG] Login attempt');
+
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
+      logger.warn({ email }, '[Auth][DEBUG] User not found for email');
       res.status(401).json({ error: 'Invalid credentials' });
       return;
     }
 
+    logger.info({ userId: user.id, hashPrefix: user.passwordHash.substring(0, 7) }, '[Auth][DEBUG] User found, comparing password');
+
     const valid = await bcrypt.compare(password, user.passwordHash);
+    logger.info({ valid }, '[Auth][DEBUG] bcrypt.compare result');
     if (!valid) {
       res.status(401).json({ error: 'Invalid credentials' });
       return;
@@ -244,7 +299,8 @@ export const faceVerify = async (req: Request, res: Response, next: NextFunction
     await storeRefreshToken(userId, refreshToken);
 
     logger.info({ userId }, '[Auth] Face verified — full tokens issued');
-    res.json({ message: 'Face verified', accessToken, refreshToken });
+    const populatedUser = await getPopulatedUser(userId);
+    res.json({ message: 'Face verified', accessToken, refreshToken, user: populatedUser });
   } catch (err) {
     next(err);
   }
@@ -297,7 +353,8 @@ export const otpVerify = async (req: Request, res: Response, next: NextFunction)
     await storeRefreshToken(userId, refreshToken);
 
     logger.info({ userId }, '[Auth] OTP verified — full tokens issued');
-    res.json({ message: 'OTP verified', accessToken, refreshToken });
+    const populatedUser = await getPopulatedUser(userId);
+    res.json({ message: 'OTP verified', accessToken, refreshToken, user: populatedUser });
   } catch (err) {
     next(err);
   }

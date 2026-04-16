@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name"> The Secret Space</string>
+    <string name="title_activity_main"> The Secret Space</string>
+    <string name="package_name">com.thesecretspace.app</string>
+    <string name="custom_url_scheme">com.thesecretspace.app</string>
+</resources>
