@@ -4,6 +4,7 @@ import redis from './config/redis';
 import logger from './config/logger';
 import { loadModels } from './services/face.service';
 import { validateJwtConfig } from './utils/jwt';
+import { startLoveBotCron } from './jobs/lovebot.cron';
 
 const PORT = process.env.PORT || 3000;
 
@@ -22,6 +23,9 @@ const start = async () => {
 
     // ── Pre-load face-api.js models ──────────────────────────────────
     await loadModels();
+
+    // ── Start LoveBot cron job ───────────────────────────────────────
+    startLoveBotCron();
 
     // ── Start HTTP server ────────────────────────────────────────────
     const server = app.listen(PORT, () => {

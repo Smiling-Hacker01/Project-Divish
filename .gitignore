@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Coverage
+coverage/
+
+# Android build artifacts
+secret-space-frontend/android/.gradle/
+secret-space-frontend/android/app/build/
+secret-space-frontend/android/build/
+secret-space-frontend/android/.idea/
+secret-space-frontend/android/local.properties
+secret-space-frontend/android/app/src/main/assets/public/
+
+# Prisma
+secret-space-backend/prisma/*.db
+secret-space-backend/prisma/migrations/migration_lock.toml
+
+# Face API models (large binary files)
+secret-space-backend/models/
+
+# Package lock (optional — remove this line if you want to track it)
+# package-lock.json
+# pnpm-lock.yaml

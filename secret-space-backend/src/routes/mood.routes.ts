@@ -1,7 +1,13 @@
 import { Router } from 'express';
+import { verifyJWT } from '../middlewares/auth';
+import { requireCouple } from '../middlewares/requireCouple';
+import { upsertMood, getCoupleMoods } from '../controllers/mood.controller';
 
 const router = Router();
 
-// TODO: wire up mood controller methods here
+router.use(verifyJWT, requireCouple);
+
+router.get('/', getCoupleMoods);
+router.post('/', upsertMood);
 
 export default router;

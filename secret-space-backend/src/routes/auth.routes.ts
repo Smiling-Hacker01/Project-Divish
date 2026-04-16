@@ -18,7 +18,7 @@ const router = Router();
 // Strict rate limit for auth endpoints — 10 attempts per 15 min per IP
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 10,
+    max: 50, // Increased for development; revert to 10 for production
     message: { error: 'Too many attempts. Please try again in 15 minutes.' },
     standardHeaders: true,
     legacyHeaders: false,
