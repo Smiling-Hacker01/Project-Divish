@@ -93,7 +93,7 @@ export const createCoupon = async (req: Request, res: Response, next: NextFuncti
     const partnerId = req.partnerId;
 
     if (!partnerId) {
-      res.status(400).json({ error: 'Your couple is not fully linked yet' });
+      res.status(400).json({ error: 'Your partner is not linked yet' });
       return;
     }
 
