@@ -20,6 +20,7 @@ const app = express();
 app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => (req as any).url === '/health' } }));
 
 // ── Security ───────────────────────────────────────────────────────────────────
+logger.info({ origins: process.env.ALLOWED_ORIGINS }, '[Server] CORS Allowed Origins');
 app.use(cors({
   origin: process.env.ALLOWED_ORIGINS?.split(',').map(s => s.trim()) || '*',
   credentials: true,
