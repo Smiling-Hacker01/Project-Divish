@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import prisma from '../config/prisma';
 import redis from '../config/redis';
@@ -13,6 +14,23 @@ const VAULT_TOKEN_TTL = 5 * 60; // 5 minutes
 export const unlockVault = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const userId = req.user!.userId;
+    const { password } = req.body;
+
+    // If password fallback is used, verify it. Otherwise, assume NativeBiometric success.
+    if (password) {
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      if (!user) {
+        res.status(404).json({ error: 'User not found' });
+        return;
+      }
+      
+      const isValid = await bcrypt.compare(password, user.passwordHash);
+      if (!isValid) {
+        res.status(401).json({ error: 'Incorrect password' });
+        return;
+      }
+    }
+
     const token = crypto.randomUUID();
 
     await redis.set(`vault:${token}`, userId, 'EX', VAULT_TOKEN_TTL);

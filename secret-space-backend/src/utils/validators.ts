@@ -75,6 +75,10 @@ export const addCommentSchema = z.object({
   text: z.string().min(1, 'Comment text is required').max(1000),
 });
 
+export const reactToCommentSchema = z.object({
+  emoji: z.string().min(1, 'Emoji is required').max(10), // Allow diverse emoji flags/ligatures up to 10 chars
+});
+
 // ── Mood Schema ────────────────────────────────────────────────────────────────
 
 export const upsertMoodSchema = z.object({
@@ -90,7 +94,12 @@ export const createCouponSchema = z.object({
 });
 
 export const updateCouponStatusSchema = z.object({
-  status: z.enum(['active', 'pending', 'used', 'expired']),
+  status: z.enum(['active', 'pending', 'used', 'fulfilled', 'expired']),
+});
+
+export const couponReviewSchema = z.object({
+  rating: z.number().int().min(1, 'Rating must be 1-5').max(5, 'Rating must be 1-5'),
+  text: z.string().max(500).optional(),
 });
 
 // ── Vault Schema ───────────────────────────────────────────────────────────────

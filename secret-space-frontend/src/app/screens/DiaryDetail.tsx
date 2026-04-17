@@ -2,8 +2,10 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { MobileContainer } from '../components/MobileContainer';
 import { Button } from '../components/Button';
-import { ArrowLeft, Heart, Send } from 'lucide-react';
+import { ArrowLeft, Heart, Send, Plus } from 'lucide-react';
 import { diaryApi, DiaryEntry } from '../api/diary';
+
+const EMOJIS = ['❤️', '😂', '😮', '😢', '🔥', '🙏'];
 
 export default function DiaryDetail() {
   const navigate = useNavigate();
@@ -16,6 +18,46 @@ export default function DiaryDetail() {
   const [liked, setLiked] = useState(false);
   const [isLiking, setIsLiking] = useState(false);
   const [isCommenting, setIsCommenting] = useState(false);
+  const [activeReactionCommentId, setActiveReactionCommentId] = useState<string | null>(null);
+
+  const handleReact = async (commentId: string, emoji: string) => {
+    setActiveReactionCommentId(null);
+    if (!id || !entry) return;
+
+    // Optimistically update
+    setEntry(prev => {
+      if (!prev) return prev;
+      const updatedComments = prev.commentsList?.map(comment => {
+        if (comment.id !== commentId) return comment;
+        
+        let found = false;
+        const newReactions = (comment.reactions || []).map(r => {
+          if (r.emoji === emoji) {
+            found = true;
+            return {
+              ...r,
+              count: r.userReacted ? r.count - 1 : r.count + 1,
+              userReacted: !r.userReacted
+            };
+          }
+          return r;
+        }).filter(r => r.count > 0);
+
+        if (!found) {
+          newReactions.push({ emoji, count: 1, userReacted: true });
+        }
+
+        return { ...comment, reactions: newReactions };
+      });
+      return { ...prev, commentsList: updatedComments };
+    });
+
+    try {
+      await diaryApi.reactToComment(id, commentId, emoji);
+    } catch(e) {
+      console.error(e);
+    }
+  };
 
   useEffect(() => {
     const fetchEntry = async () => {
@@ -62,7 +104,8 @@ export default function DiaryDetail() {
     setIsCommenting(true);
     
     // Optimistic UI update
-    const newComment = { author: 'You', text, timestamp: new Date().toISOString() };
+    // using a temporary fake ID so reactions won't crash on newly added comments
+    const newComment = { id: `temp-${Date.now()}`, author: 'You', text, timestamp: new Date().toISOString(), reactions: [] };
     setEntry(prev => prev ? { 
       ...prev, 
       comments: prev.comments + 1,
@@ -144,9 +187,19 @@ export default function DiaryDetail() {
             </div>
 
             {/* Content */}
-            <p className="text-warm-white leading-relaxed mb-4 whitespace-pre-wrap">
-              {entry.content}
-            </p>
+            {(entry.type === 'image' || (entry.type as string) === 'photo' || entry.content.startsWith('http')) ? (
+              <div className="w-full mb-6 rounded-xl overflow-hidden bg-surface/50 border border-border">
+                <img 
+                  src={entry.content} 
+                  alt="Diary Entry" 
+                  className="w-full h-auto object-contain max-h-[60vh] bg-near-black" 
+                />
+              </div>
+            ) : (
+              <p className="text-warm-white leading-relaxed mb-6 whitespace-pre-wrap">
+                {entry.content}
+              </p>
+            )}
 
             {/* Like Button */}
             <button
@@ -166,14 +219,50 @@ export default function DiaryDetail() {
             <h3 className="text-sm font-medium text-muted-text">Comments</h3>
             {entry.commentsList && entry.commentsList.length > 0 ? (
               entry.commentsList.map((comment, index) => (
-                <div key={index} className="bg-surface/30 p-4 rounded-xl border border-border">
+                <div key={comment.id || index} className="bg-surface/30 p-4 rounded-xl border border-border relative">
                   <div className="flex items-center gap-2 mb-2">
                     <p className="text-sm font-medium text-warm-white">{comment.author}</p>
                     <span className="text-xs text-muted-text">
                       {formatTimestamp(comment.timestamp)}
                     </span>
                   </div>
-                  <p className="text-sm text-warm-white">{comment.text}</p>
+                  <p className="text-sm text-warm-white mb-3">{comment.text}</p>
+                  
+                  {/* Reactions Bar */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {comment.reactions?.map(reaction => (
+                      <button 
+                        key={reaction.emoji}
+                        onClick={() => handleReact(comment.id, reaction.emoji)}
+                        className={`px-2 py-1 rounded-full text-xs flex items-center gap-1 border transition-colors focus:outline-none ${reaction.userReacted ? 'bg-rose/20 border-rose/50 text-rose font-medium' : 'bg-surface/50 border-border text-muted-text hover:border-rose/30'}`}
+                      >
+                        <span>{reaction.emoji}</span>
+                        <span>{reaction.count}</span>
+                      </button>
+                    ))}
+                    
+                    <button 
+                      onClick={() => setActiveReactionCommentId(activeReactionCommentId === comment.id ? null : comment.id)}
+                      className="w-7 h-7 rounded-full bg-surface/50 border border-border flex items-center justify-center text-muted-text hover:text-rose hover:border-rose/30 transition-colors focus:outline-none active:scale-95"
+                    >
+                      <Plus className="w-3 h-3" />
+                    </button>
+                  </div>
+
+                  {/* Emoji Picker Popover */}
+                  {activeReactionCommentId === comment.id && (
+                    <div className="absolute top-full left-4 mt-2 z-20 bg-surface border border-border rounded-2xl shadow-xl p-2 flex gap-1 animate-in fade-in zoom-in duration-200">
+                      {EMOJIS.map(emoji => (
+                        <button
+                          key={emoji}
+                          onClick={() => handleReact(comment.id, emoji)}
+                          className="w-10 h-10 flex items-center justify-center hover:bg-surface/50 rounded-xl text-xl transition-all focus:outline-none active:scale-90 hover:-translate-y-1"
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))
             ) : (

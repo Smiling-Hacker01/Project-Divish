@@ -6,6 +6,7 @@ import {
   createDiarySchema,
   likeEntrySchema,
   addCommentSchema,
+  reactToCommentSchema,
 } from '../utils/validators';
 
 // ── GET /api/diary ─────────────────────────────────────────────────────────────
@@ -71,11 +72,29 @@ export const getEntry = async (req: Request, res: Response, next: NextFunction):
     const likes = entry.reactions.filter((r) => r.type === 'heart').length;
     const commentsList = entry.reactions
       .filter((r) => r.type === 'comment')
-      .map((r) => ({
-        author: r.userId === userId ? 'You' : r.user.name,
-        text: r.commentText || '',
-        timestamp: r.createdAt.toISOString(),
-      }));
+      .map((r) => {
+        // Find reactions pointing to this comment
+        const commentReactions = entry.reactions.filter(rr => (rr as any).parentId === r.id && rr.type === 'reaction');
+        
+        // Group by emoji
+        const reactionMap = new Map<string, { count: number, userReacted: boolean }>();
+        for (const cr of commentReactions) {
+          if (!(cr as any).emoji) continue;
+          const current = reactionMap.get((cr as any).emoji) || { count: 0, userReacted: false };
+          reactionMap.set((cr as any).emoji, {
+            count: current.count + 1,
+            userReacted: current.userReacted || cr.userId === userId
+          });
+        }
+
+        return {
+          id: r.id,
+          author: r.userId === userId ? 'You' : r.user.name,
+          text: r.commentText || '',
+          timestamp: r.createdAt.toISOString(),
+          reactions: Array.from(reactionMap.entries()).map(([emoji, data]) => ({ emoji, ...data }))
+        };
+      });
 
     res.json({
       id: entry.id,
@@ -201,6 +220,49 @@ export const addComment = async (req: Request, res: Response, next: NextFunction
     await prisma.diaryReaction.create({
       data: { entryId: id, userId, type: 'comment', commentText: text },
     });
+
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ── POST /api/diary/:id/comments/:commentId/react ────────────────────────────
+export const reactToComment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const parsed = reactToCommentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0].message });
+      return;
+    }
+    const { emoji } = parsed.data;
+    const userId = req.user!.userId;
+    const { id, commentId } = req.params;
+    const coupleId = req.coupleId!;
+
+    const entry = await prisma.diaryEntry.findFirst({ where: { id, coupleId } });
+    if (!entry) {
+      res.status(404).json({ error: 'Entry not found' });
+      return;
+    }
+
+    const comment = await prisma.diaryReaction.findFirst({ where: { id: commentId, type: 'comment', entryId: id } });
+    if (!comment) {
+      res.status(404).json({ error: 'Comment not found' });
+      return;
+    }
+
+    const existingReaction = await (prisma.diaryReaction as any).findFirst({
+      where: { parentId: commentId, userId, type: 'reaction', emoji }
+    });
+
+    if (existingReaction) {
+      await prisma.diaryReaction.delete({ where: { id: existingReaction.id } });
+    } else {
+      await (prisma.diaryReaction as any).create({
+        data: { entryId: id, userId, type: 'reaction', parentId: commentId, emoji },
+      });
+    }
 
     res.json({ success: true });
   } catch (err) {

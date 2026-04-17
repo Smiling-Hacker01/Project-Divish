@@ -8,9 +8,13 @@ import { vaultApi } from '../api/vault';
 export default function VaultUnlock() {
   const navigate = useNavigate();
   const [state, setState] = useState<'locked' | 'unlocking' | 'unlocked'>('locked');
+  const [errorMsg, setErrorMsg] = useState('');
+  const [password, setPassword] = useState('');
+  const [isPasswordLoading, setIsPasswordLoading] = useState(false);
 
   const handleUnlock = async () => {
     setState('unlocking');
+    setErrorMsg('');
     try {
       // In a real app with capacitor/cordova this would call native biometrics, 
       // then send a signature to the backend to get a short-lived vault token.
@@ -23,7 +27,30 @@ export default function VaultUnlock() {
       }
     } catch (e) {
       console.error(e);
+      setErrorMsg('Biometric verification failed.');
       setState('locked'); // Go back to locked state on failure
+    }
+  };
+
+  const handlePasswordUnlock = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!password) return;
+    setIsPasswordLoading(true);
+    setErrorMsg('');
+    try {
+      const res = await vaultApi.verifyAccessPasswordFallback(password);
+      if ((res as any).token) {
+        setState('unlocked');
+        setTimeout(() => {
+           navigate('/vault', { state: { vaultToken: (res as any).token } });
+        }, 800);
+      }
+    } catch (e: any) {
+      console.error(e);
+      setErrorMsg(e.response?.data?.error || 'Incorrect password.');
+      setState('locked');
+    } finally {
+      setIsPasswordLoading(false);
     }
   };
 
@@ -55,6 +82,35 @@ export default function VaultUnlock() {
                 Unlock with Biometrics
               </span>
             </button>
+
+            {errorMsg && (
+              <p className="text-sm text-rose mt-4 animate-in slide-in-from-bottom-2 fade-in duration-300">
+                {errorMsg}
+              </p>
+            )}
+
+            {/* Password Fallback Form */}
+            {errorMsg && (
+              <form onSubmit={handlePasswordUnlock} className="mt-8 pt-6 border-t border-border animate-in fade-in duration-500">
+                <p className="text-sm text-muted-text mb-4">Use your account password instead:</p>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    placeholder="Enter password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="flex-1 px-4 py-3 bg-surface/50 border border-border rounded-xl text-warm-white focus:outline-none focus:ring-2 focus:ring-rose/50"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isPasswordLoading || !password}
+                    className="px-6 py-3 bg-rose rounded-xl text-warm-white font-medium hover:bg-rose/90 disabled:opacity-50 transition-colors focus:outline-none"
+                  >
+                    {isPasswordLoading ? '...' : 'Unlock'}
+                  </button>
+                </div>
+              </form>
+            )}
           </motion.div>
         )}
 

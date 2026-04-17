@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Button } from '../components/Button';
 import { MobileContainer } from '../components/MobileContainer';
-import { ArrowLeft, Type, Image, Video } from 'lucide-react';
+import { ArrowLeft, Type, Image as ImageIcon, Video } from 'lucide-react';
 import { diaryApi } from '../api/diary';
+import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 
-type EntryType = 'text' | 'photo' | 'video';
+type EntryType = 'text' | 'image' | 'video';
 
 export default function DiaryCreate() {
   const navigate = useNavigate();
@@ -22,6 +23,26 @@ export default function DiaryCreate() {
       console.error(e);
       setIsSubmitting(false);
     }
+  };
+
+  const handlePhotoSelect = async () => {
+    try {
+      const image = await Camera.getPhoto({
+        quality: 90,
+        allowEditing: false,
+        resultType: CameraResultType.Base64,
+        source: CameraSource.Prompt
+      });
+      if (image.base64String) {
+        setContent(`data:image/jpeg;base64,${image.base64String}`);
+      }
+    } catch(e) {
+      console.log('User cancelled or camera failed', e);
+    }
+  };
+
+  const handleVideoSelect = () => {
+    alert('Video recording coming soon to native app!');
   };
 
   return (
@@ -50,18 +71,18 @@ export default function DiaryCreate() {
             <span className="text-sm font-medium">Text</span>
           </button>
           <button
-            onClick={() => setEntryType('photo')}
+            onClick={() => { setEntryType('image'); setContent(''); }}
             className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg transition-all focus:outline-none ${
-              entryType === 'photo'
+              entryType === 'image'
                 ? 'bg-rose text-warm-white'
                 : 'text-muted-text hover:text-warm-white'
             }`}
           >
-            <Image className="w-4 h-4" />
+            <ImageIcon className="w-4 h-4" />
             <span className="text-sm font-medium">Photo</span>
           </button>
           <button
-            onClick={() => setEntryType('video')}
+            onClick={() => { setEntryType('video'); setContent(''); }}
             className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg transition-all focus:outline-none ${
               entryType === 'video'
                 ? 'bg-rose text-warm-white'
@@ -84,16 +105,28 @@ export default function DiaryCreate() {
             />
           )}
 
-          {entryType === 'photo' && (
-            <div className="w-full h-64 bg-surface/50 border-2 border-dashed border-border rounded-2xl flex flex-col items-center justify-center text-muted-text hover:border-rose/50 transition-all cursor-pointer">
-              <Image className="w-12 h-12 mb-3" />
-              <p className="text-sm">Tap to select a photo</p>
-              <p className="text-xs mt-1">Or take a new one</p>
+          {entryType === 'image' && (
+            <div 
+              onClick={handlePhotoSelect}
+              className="w-full h-64 overflow-hidden bg-surface/50 border-2 border-dashed border-border rounded-2xl flex flex-col items-center justify-center text-muted-text hover:border-rose/50 transition-all cursor-pointer focus:outline-none relative"
+            >
+              {content ? (
+                <img src={content} alt="Preview" className="w-full h-full object-cover" />
+              ) : (
+                <>
+                  <ImageIcon className="w-12 h-12 mb-3" />
+                  <p className="text-sm">Tap to select a photo</p>
+                  <p className="text-xs mt-1">Or take a new one</p>
+                </>
+              )}
             </div>
           )}
 
           {entryType === 'video' && (
-            <div className="w-full h-64 bg-surface/50 border-2 border-dashed border-border rounded-2xl flex flex-col items-center justify-center text-muted-text hover:border-rose/50 transition-all cursor-pointer">
+            <div 
+              onClick={handleVideoSelect}
+              className="w-full h-64 bg-surface/50 border-2 border-dashed border-border rounded-2xl flex flex-col items-center justify-center text-muted-text hover:border-rose/50 transition-all cursor-pointer focus:outline-none"
+            >
               <Video className="w-12 h-12 mb-3" />
               <p className="text-sm">Tap to select a video</p>
               <p className="text-xs mt-1">Or record a new one</p>

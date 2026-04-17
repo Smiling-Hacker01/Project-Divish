@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { MobileContainer } from '../components/MobileContainer';
-import { ArrowLeft, Plus, Ticket } from 'lucide-react';
+import { ArrowLeft, Plus, Ticket, Star } from 'lucide-react';
 import { motion } from 'motion/react';
 import { couponsApi, Coupon } from '../api/coupons';
 
 export default function Coupons() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<'given' | 'received'>('received');
+  const [tab, setTab] = useState<'given' | 'received' | 'to-fulfill'>('received');
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -25,15 +25,18 @@ export default function Coupons() {
     fetchCoupons();
   }, []);
 
-  const filteredCoupons = coupons.filter(c => 
-    tab === 'given' ? c.creator === 'you' : c.recipient === 'you'
-  );
+  const filteredCoupons = coupons.filter(c => {
+    if (tab === 'to-fulfill') return c.status === 'Used' && c.creator === 'you';
+    if (tab === 'given') return c.creator === 'you';
+    return c.recipient === 'you';
+  });
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'Active': return 'text-gold border-gold/30 bg-gold/10';
       case 'Pending': return 'text-muted-text border-border bg-surface/30';
-      case 'Used': return 'text-muted-text border-border bg-surface/20';
+      case 'Used': return 'text-rose border-rose/30 bg-surface/20'; // Highlight a bit more as it needs action
+      case 'Fulfilled': return 'text-muted-text border-border bg-surface/30';
       case 'Expired': return 'text-rose border-rose/30 bg-rose/10';
       default: return 'text-muted-text border-border bg-surface/30';
     }
@@ -80,6 +83,21 @@ export default function Coupons() {
               }`}
             >
               <span className="text-sm font-medium">Given</span>
+            </button>
+            <button
+              onClick={() => setTab('to-fulfill')}
+              className={`flex-1 py-2 rounded-lg transition-all focus:outline-none outline-none ${
+                tab === 'to-fulfill'
+                  ? 'bg-rose text-warm-white'
+                  : 'text-muted-text hover:text-warm-white'
+              }`}
+            >
+              <span className="text-sm font-medium">To Fulfill</span>
+              {coupons.filter(c => c.status === 'Used' && c.creator === 'you').length > 0 && (
+                <span className="ml-1.5 px-1.5 py-0.5 bg-warm-white text-rose rounded-full text-[10px] font-bold">
+                  {coupons.filter(c => c.status === 'Used' && c.creator === 'you').length}
+                </span>
+              )}
             </button>
           </div>
         </div>
@@ -144,6 +162,11 @@ export default function Coupons() {
                       <span>
                         Expires: {new Date(coupon.expiry).toLocaleDateString()}
                       </span>
+                    )}
+                    {coupon.reviewRating && coupon.status === 'Fulfilled' && (
+                      <div className="flex items-center gap-1 text-gold">
+                        {coupon.reviewRating} <Star className="w-3 h-3 fill-gold" />
+                      </div>
                     )}
                   </div>
 
