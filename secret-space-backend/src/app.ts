@@ -16,6 +16,10 @@ import { errorHandler } from './middlewares/errorHandler';
 
 const app = express();
 
+// ── Railway Proxy Config ───────────────────────────────────────────────────────
+// Required for express-rate-limit to work behind Railway's load balancer
+app.set('trust proxy', 1);
+
 // ── Request logging ────────────────────────────────────────────────────────────
 app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => (req as any).url === '/health' } }));
 
