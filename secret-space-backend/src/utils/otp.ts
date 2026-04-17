@@ -32,15 +32,7 @@ const getTransporter = (): nodemailer.Transporter => {
 };
 
 export const sendOtpEmail = async (email: string, otp: string): Promise<void> => {
-  // ── SMTP BYPASS ──
-  // Railway blocks outbound ports 25, 465, and 587 on Hobby/Trial plans.
-  // To allow you to test your app, we will print the OTP directly to the logs!
-  logger.info(`===================================================`);
-  logger.info(`[⚠️ RAILWAY BYPASS] OTP for ${email} is: ${otp}`);
-  logger.info(`===================================================`);
-  
-  // We return early here to pretend the email sent successfully.
-  return;
+
 
   const from = `"The Secret Space" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`;
 
