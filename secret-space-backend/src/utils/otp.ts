@@ -23,8 +23,10 @@ const getTransporter = (): nodemailer.Transporter => {
     host,
     port: Number(process.env.SMTP_PORT || 587),
     secure: process.env.SMTP_SECURE === 'true',
+    // Force Node to use IPv4 instead of IPv6 for Railway compatibility
+    family: 4, 
     auth: { user, pass },
-  });
+  } as any);
 
   return transporter;
 };
