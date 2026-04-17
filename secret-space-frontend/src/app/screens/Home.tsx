@@ -278,19 +278,16 @@ export default function Home() {
         {/* Quick Actions */}
         <div>
           <h2 className="text-sm font-medium text-muted-text mb-4">Quick Actions</h2>
-          <div className="grid grid-cols-4 gap-4">
-            {quickActions.map((action, index) => (
-              <motion.button
+          <div className="grid grid-cols-2 gap-4">
+            {quickActions.map((action) => (
+              <button
                 key={action.label}
-                initial={{ y: 20, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                transition={{ delay: index * 0.1 }}
                 onClick={() => navigate(action.path)}
                 className="flex flex-col items-center gap-2 p-4 bg-surface/50 rounded-2xl border border-border hover:border-rose/50 transition-all active:scale-[0.98] outline-none"
               >
-                <action.icon className={`w-6 h-6 text-${action.color}`} />
-                <span className="text-xs text-warm-white">{action.label}</span>
-              </motion.button>
+                <action.icon className="w-8 h-8" style={{ color: action.color === 'rose' ? '#e74c8b' : action.color === 'gold' ? '#f1c40f' : '#888' }} />
+                <span className="text-sm text-warm-white font-medium">{action.label}</span>
+              </button>
             ))}
           </div>
         </div>
