@@ -18,6 +18,9 @@ export default defineConfig({
   },
 
   server: {
+    watch: {
+      ignored: ['**/android/**']
+    },
     host: true,
     allowedHosts: [
       'agreements-helping-pipeline-pose.trycloudflare.com',

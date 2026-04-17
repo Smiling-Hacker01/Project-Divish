@@ -53,6 +53,9 @@ const start = async () => {
     process.on('SIGINT', () => shutdown('SIGINT'));
   } catch (err) {
     logger.fatal({ err }, '[Server] Failed to start');
+    console.error("======= FATAL CRASH EXACT ERROR =======");
+    console.error(err);
+    console.error("=========================================");
     process.exit(1);
   }
 };
