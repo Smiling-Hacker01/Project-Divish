@@ -15,14 +15,23 @@ export default function CouponCreate() {
     expiry: '',
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState('');
 
   const handleCreate = async () => {
     setIsSubmitting(true);
+    setError('');
     try {
-      await couponsApi.createCoupon(formData);
+      const payload = {
+        title: formData.title,
+        description: formData.description,
+        expiresAt: formData.expiry || undefined
+      };
+      // We typecast as any to bypass the Partial<Coupon> interface strictness for expiresAt
+      await couponsApi.createCoupon(payload as any);
       navigate('/coupons');
-    } catch(e) {
+    } catch(e: any) {
       console.error(e);
+      setError(e.response?.data?.error || 'Failed to mint coupon');
       setIsSubmitting(false);
     }
   };
@@ -125,6 +134,12 @@ export default function CouponCreate() {
             </motion.div>
           )}
         </div>
+
+        {error && (
+          <div className="p-4 rounded-xl bg-rose/10 border border-rose/30 mt-4 mb-4">
+            <p className="text-sm font-medium text-rose">{error}</p>
+          </div>
+        )}
 
         {/* Create Button */}
         <Button
