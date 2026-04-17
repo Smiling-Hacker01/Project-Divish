@@ -16,7 +16,7 @@ export const startLoveBotCron = (): void => {
   cron.schedule('* * * * *', async () => {
     try {
       const now = new Date();
-      const currentTime = `${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`;
+      const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
       const todayKey = now.toISOString().split('T')[0]; // YYYY-MM-DD
 
       // Find active couples

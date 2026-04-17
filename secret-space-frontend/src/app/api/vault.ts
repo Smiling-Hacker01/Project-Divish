@@ -22,12 +22,17 @@ export const vaultApi = {
         description: "Verify your identity"
       });
     } catch(e) {
-      console.warn('Biometric verify failed or unsupported, falling back for development', e);
-      // In development/web, allow fallback
+      console.error('Biometric verify failed:', e);
+      throw new Error('Biometric verification failed');
     }
 
     // Call backend to get a vault session token
-    const res = await apiClient.post<{ success: boolean; token: string }>('/vault/unlock');
+    const res = await apiClient.post<{ success: boolean; token: string }>('/vault/unlock', {});
+    return res.data;
+  },
+
+  verifyAccessPasswordFallback: async (password: string) => {
+    const res = await apiClient.post<{ success: boolean; token: string }>('/vault/unlock', { password });
     return res.data;
   },
 

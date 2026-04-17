@@ -1,15 +1,17 @@
 import { apiClient } from './client';
 
 export interface DiaryComment {
+  id: string; // added id
   author: string;
   text: string;
   timestamp: string;
+  reactions?: { emoji: string; count: number; userReacted: boolean }[];
 }
 
 export interface DiaryEntry {
   id: string;
   author: 'you' | 'partner';
-  type: 'text' | 'photo' | 'video';
+  type: 'text' | 'image' | 'video';
   content: string;
   timestamp: string;
   likes: number;
@@ -40,6 +42,11 @@ export const diaryApi = {
 
   addComment: async (id: string, text: string) => {
     const res = await apiClient.post(`/diary/${id}/comments`, { text });
+    return res.data;
+  },
+
+  reactToComment: async (id: string, commentId: string, emoji: string) => {
+    const res = await apiClient.post(`/diary/${id}/comments/${commentId}/react`, { emoji });
     return res.data;
   },
 

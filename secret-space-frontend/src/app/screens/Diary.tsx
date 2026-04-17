@@ -108,9 +108,15 @@ export default function Diary() {
                 </div>
 
                 {/* Content */}
-                <p className="text-warm-white leading-relaxed mb-4 whitespace-pre-wrap">
-                  {entry.content}
-                </p>
+                {(entry.type === 'image' || (entry.type as string) === 'photo' || entry.content.startsWith('http')) ? (
+                  <div className="w-full mb-4 rounded-xl overflow-hidden bg-surface/50">
+                    <img src={entry.content} alt="Diary Entry" className="w-full h-auto object-cover max-h-80" />
+                  </div>
+                ) : (
+                  <p className="text-warm-white leading-relaxed mb-4 whitespace-pre-wrap">
+                    {entry.content}
+                  </p>
+                )}
 
                 {/* Reaction bar */}
                 <div className="flex items-center gap-6 pt-4 border-t border-border">

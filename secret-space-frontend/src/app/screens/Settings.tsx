@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { Button } from '../components/Button';
 import { MobileContainer } from '../components/MobileContainer';
@@ -15,6 +15,28 @@ export default function Settings() {
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [anniversaryDate, setAnniversaryDate] = useState(user?.anniversaryDate || '2022-01-15');
   const [isLoading, setIsLoading] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [facePassword, setFacePassword] = useState('');
+  const [facePasswordError, setFacePasswordError] = useState('');
+  const [showEditProfile, setShowEditProfile] = useState(false);
+  const [editName, setEditName] = useState(user?.name || '');
+  const [editProfileLoading, setEditProfileLoading] = useState(false);
+  const [editProfileError, setEditProfileError] = useState('');
+
+  // Fetch live profile on mount to get accurate faceMFAEnabled
+  useEffect(() => {
+    const fetchProfile = async () => {
+      try {
+        const data = await settingsApi.getProfile();
+        if (data?.user) {
+          updateUser(data.user);
+        }
+      } catch(e) {
+        console.error('Failed to fetch profile', e);
+      }
+    };
+    fetchProfile();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleLogout = async () => {
     setIsLoading(true);
@@ -49,6 +71,35 @@ export default function Settings() {
     }
   };
 
+  const handleFaceEnrollNav = () => {
+    if (!facePassword.trim()) {
+      setFacePasswordError('Password is required');
+      return;
+    }
+    setShowPasswordModal(false);
+    navigate('/face-enrollment', { state: { email: user?.email, password: facePassword, isOnboarding: false } });
+    setFacePassword('');
+    setFacePasswordError('');
+  };
+
+  const handleSaveProfile = async () => {
+    if (!editName.trim()) {
+      setEditProfileError('Name cannot be empty');
+      return;
+    }
+    setEditProfileLoading(true);
+    setEditProfileError('');
+    try {
+      await settingsApi.updateProfile({ name: editName.trim() });
+      updateUser({ name: editName.trim() });
+      setShowEditProfile(false);
+    } catch(e: any) {
+      setEditProfileError(e.response?.data?.error || 'Failed to update profile');
+    } finally {
+      setEditProfileLoading(false);
+    }
+  };
+
   return (
     <MobileContainer>
       <div className="min-h-screen pb-24 p-6">
@@ -78,7 +129,10 @@ export default function Settings() {
               </div>
             </div>
 
-            <button className="w-full flex items-center justify-between p-4 bg-surface/30 rounded-xl border border-border hover:border-rose/30 transition-all">
+            <button 
+              onClick={() => { setEditName(user?.name || ''); setEditProfileError(''); setShowEditProfile(true); }}
+              className="w-full flex items-center justify-between p-4 bg-surface/30 rounded-xl border border-border hover:border-rose/30 transition-all"
+            >
               <div className="flex items-center gap-3">
                 <User className="w-5 h-5 text-muted-text" />
                 <span className="text-warm-white">Edit Profile</span>
@@ -138,9 +192,21 @@ export default function Settings() {
         <div className="mb-8">
           <h2 className="text-sm font-medium text-muted-text mb-4">Security</h2>
           <div className="bg-surface/50 rounded-2xl border border-border overflow-hidden">
-            {!user?.faceMFAEnabled && (
+            {/* Row 1: Status / Set Up */}
+            {user?.faceMFAEnabled ? (
+              <div className="w-full flex items-center justify-between p-4 border-b border-border opacity-80">
+                <div className="flex items-center gap-3">
+                  <ScanFace className="w-5 h-5 text-green-400" />
+                  <div className="text-left">
+                    <span className="text-warm-white font-medium block">Face ID Already Enrolled</span>
+                    <span className="text-xs text-muted-text">Your face is set up for quick login</span>
+                  </div>
+                </div>
+                <span className="text-xs px-2 py-1 bg-green-500/20 text-green-400 rounded-full">Active ✓</span>
+              </div>
+            ) : (
               <button 
-                onClick={() => navigate('/face-enrollment')}
+                onClick={() => { setFacePasswordError(''); setFacePassword(''); setShowPasswordModal(true); }}
                 className="w-full flex items-center justify-between p-4 hover:bg-surface/30 transition-colors border-b border-border"
               >
                 <div className="flex items-center gap-3">
@@ -153,15 +219,23 @@ export default function Settings() {
                 <span className="text-xs px-2 py-1 bg-gold/20 text-gold rounded-full">New</span>
               </button>
             )}
-            <button className="w-full flex items-center justify-between p-4 hover:bg-surface/30 transition-colors border-b border-border">
-              <div className="flex items-center gap-3">
-                <ScanFace className="w-5 h-5 text-muted-text" />
-                <span className="text-warm-white">
-                  {user?.faceMFAEnabled ? 'Re-enroll' : 'Manage'} Face ID
-                </span>
-              </div>
-            </button>
-            <button className="w-full flex items-center justify-between p-4 hover:bg-surface/30 transition-colors">
+
+            {/* Row 2: Re-enroll (only shown when already enrolled) */}
+            {user?.faceMFAEnabled && (
+              <button 
+                onClick={() => { setFacePasswordError(''); setFacePassword(''); setShowPasswordModal(true); }}
+                className="w-full flex items-center justify-between p-4 hover:bg-surface/30 transition-colors border-b border-border"
+              >
+                <div className="flex items-center gap-3">
+                  <ScanFace className="w-5 h-5 text-muted-text" />
+                  <span className="text-warm-white">Re-enroll Face ID</span>
+                </div>
+              </button>
+            )}
+            <button 
+              onClick={() => navigate('/lovebot')}
+              className="w-full flex items-center justify-between p-4 hover:bg-surface/30 transition-colors"
+            >
               <div className="flex items-center gap-3">
                 <Bell className="w-5 h-5 text-muted-text" />
                 <span className="text-warm-white">Notification Preferences</span>
@@ -222,6 +296,63 @@ export default function Settings() {
               <div className="flex gap-3">
                 <Button variant="secondary" fullWidth onClick={() => setShowLeaveConfirm(false)}>Cancel</Button>
                 <Button variant="primary" fullWidth onClick={handleLeaveSpace} disabled={isLoading} className="!bg-rose">{isLoading ? '...' : 'Leave'}</Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Password Modal for Face Enrollment */}
+        {showPasswordModal && (
+          <div className="fixed inset-0 bg-near-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-6">
+            <div className="bg-surface rounded-2xl p-6 max-w-sm w-full border border-border">
+              <h3 className="text-xl font-bold text-warm-white mb-2">Confirm Identity</h3>
+              <p className="text-muted-text mb-6 text-sm">Enter your account password to proceed with Face ID enrollment.</p>
+              <input
+                type="password"
+                placeholder="Enter your password"
+                value={facePassword}
+                onChange={(e) => { setFacePassword(e.target.value); setFacePasswordError(''); }}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleFaceEnrollNav(); }}
+                className="w-full px-4 py-3 bg-surface/30 border border-border rounded-xl text-warm-white mb-2 focus:outline-none focus:ring-2 focus:ring-rose/50"
+              />
+              {facePasswordError && <p className="text-xs text-rose mb-4">{facePasswordError}</p>}
+              <div className="flex gap-3 mt-4">
+                <Button variant="secondary" fullWidth onClick={() => setShowPasswordModal(false)}>Cancel</Button>
+                <Button variant="primary" fullWidth onClick={handleFaceEnrollNav}>Continue</Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Edit Profile Modal */}
+        {showEditProfile && (
+          <div className="fixed inset-0 bg-near-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-6">
+            <div className="bg-surface rounded-2xl p-6 max-w-sm w-full border border-border">
+              <h3 className="text-xl font-bold text-warm-white mb-2">Edit Profile</h3>
+              <p className="text-muted-text mb-6 text-sm">Update your display name below.</p>
+              <label className="text-xs text-muted-text mb-1 block">Name</label>
+              <input
+                type="text"
+                placeholder="Your name"
+                value={editName}
+                onChange={(e) => { setEditName(e.target.value); setEditProfileError(''); }}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleSaveProfile(); }}
+                className="w-full px-4 py-3 bg-surface/30 border border-border rounded-xl text-warm-white mb-2 focus:outline-none focus:ring-2 focus:ring-rose/50"
+              />
+              {editProfileError && <p className="text-xs text-rose mb-4">{editProfileError}</p>}
+              <label className="text-xs text-muted-text mb-1 block mt-4">Email</label>
+              <input
+                type="email"
+                value={user?.email || ''}
+                disabled
+                className="w-full px-4 py-3 bg-surface/30 border border-border rounded-xl text-muted-text mb-2 cursor-not-allowed opacity-60"
+              />
+              <p className="text-xs text-muted-text mb-4">Email cannot be changed</p>
+              <div className="flex gap-3 mt-4">
+                <Button variant="secondary" fullWidth onClick={() => setShowEditProfile(false)}>Cancel</Button>
+                <Button variant="primary" fullWidth onClick={handleSaveProfile} disabled={editProfileLoading}>
+                  {editProfileLoading ? 'Saving...' : 'Save'}
+                </Button>
               </div>
             </div>
           </div>

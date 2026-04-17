@@ -20,7 +20,9 @@ export default defineConfig({
   server: {
     host: true,
     allowedHosts: [
-      'goals-replication-mem-logical.trycloudflare.com',
+      'agreements-helping-pipeline-pose.trycloudflare.com',
+      'localhost:5173',
+      'document-advertisements-left-yale.trycloudflare.com'
     ],
   },
 

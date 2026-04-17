@@ -138,7 +138,9 @@ export default function FaceEnrollment() {
         {state === 'failed' && (
           <div className="space-y-3">
             <Button variant="secondary" fullWidth onClick={handleRetry}>Try Again</Button>
-            <Button variant="primary" fullWidth onClick={handleSkip}>Continue with OTP</Button>
+            <Button variant="primary" fullWidth onClick={handleSkip}>
+              {isOnboarding ? 'Continue with OTP' : 'Back to Dashboard'}
+            </Button>
           </div>
         )}
       </div>

@@ -8,6 +8,7 @@ import {
   likeEntry,
   addComment,
   deleteEntry,
+  reactToComment,
 } from '../controllers/diary.controller';
 
 const router = Router();
@@ -19,6 +20,7 @@ router.get('/:id', getEntry);
 router.post('/', createEntry);
 router.post('/:id/like', likeEntry);
 router.post('/:id/comments', addComment);
+router.post('/:id/comments/:commentId/react', reactToComment);
 router.delete('/:id', deleteEntry);
 
 export default router;

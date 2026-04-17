@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { Button } from '../components/Button';
 import { MobileContainer } from '../components/MobileContainer';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Star } from 'lucide-react';
 import { motion } from 'motion/react';
 import { couponsApi, Coupon } from '../api/coupons';
 
@@ -12,6 +12,8 @@ export default function CouponDetail() {
   const [coupon, setCoupon] = useState<Coupon | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [reviewRating, setReviewRating] = useState<number>(0);
+  const [reviewText, setReviewText] = useState('');
 
   useEffect(() => {
     const fetchCoupon = async () => {
@@ -34,7 +36,7 @@ export default function CouponDetail() {
     
     // Optimistic UI Component updates could happen here
     try {
-      await couponsApi.updateCouponStatus(id, 'Pending');
+      await couponsApi.updateCouponStatus(id, 'pending');
       setCoupon(prev => prev ? { ...prev, status: 'Pending' } : null);
     } catch(e) {
       console.error(e);
@@ -48,8 +50,39 @@ export default function CouponDetail() {
     setIsUpdating(true);
     
     try {
-      await couponsApi.updateCouponStatus(id, 'Used');
+      await couponsApi.updateCouponStatus(id, 'used');
       setCoupon(prev => prev ? { ...prev, status: 'Used' } : null);
+    } catch(e) {
+      console.error(e);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleFulfill = async () => {
+    if (!coupon || !id || isUpdating) return;
+    setIsUpdating(true);
+    try {
+      await couponsApi.fulfillCoupon(id);
+      setCoupon(prev => prev ? { ...prev, status: 'Fulfilled', fulfilledAt: new Date().toISOString() } : null);
+    } catch(e) {
+      console.error(e);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleReviewSubmit = async () => {
+    if (!coupon || !id || isUpdating || reviewRating === 0) return;
+    setIsUpdating(true);
+    try {
+      await couponsApi.addReview(id, { rating: reviewRating, text: reviewText });
+      setCoupon(prev => prev ? { 
+        ...prev, 
+        reviewRating, 
+        reviewText,
+        reviewedAt: new Date().toISOString()
+      } : null);
     } catch(e) {
       console.error(e);
     } finally {
@@ -130,12 +163,28 @@ export default function CouponDetail() {
                     </span>
                   </div>
                 )}
+                {coupon.redeemedAt && (
+                   <div className="flex items-center justify-between text-sm">
+                     <span className="text-muted-text">Redeemed</span>
+                     <span className="text-warm-white font-medium">
+                       {new Date(coupon.redeemedAt).toLocaleDateString()}
+                     </span>
+                   </div>
+                 )}
+                 {coupon.fulfilledAt && (
+                   <div className="flex items-center justify-between text-sm">
+                     <span className="text-muted-text">Fulfilled</span>
+                     <span className="text-warm-white font-medium">
+                       {new Date(coupon.fulfilledAt).toLocaleDateString()}
+                     </span>
+                   </div>
+                 )}
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-muted-text">Status</span>
                   <span className={`font-medium ${
                     coupon.status === 'Active' ? 'text-gold' :
                     coupon.status === 'Pending' ? 'text-muted-text' :
-                    coupon.status === 'Used' ? 'text-muted-text' :
+                    (coupon.status === 'Used' || coupon.status === 'Fulfilled') ? 'text-muted-text' :
                     'text-rose'
                   }`}>
                     {coupon.status}
@@ -189,17 +238,39 @@ export default function CouponDetail() {
               </div>
             )}
 
-            {coupon.status === 'Used' && (
+            {coupon.status === 'Used' && coupon.recipient === 'you' && (
               <div className="text-center">
                 <p className="text-sm text-gold mb-2">
-                  This coupon has been redeemed! 🎉
+                  To be fulfilled! 🎉
                 </p>
                 <p className="text-xs text-muted-text">
-                  Hope you enjoyed it!
+                  Your partner has approved this coupon and is working on fulfilling it.
+                </p>
+              </div>
+            )}
+
+            {coupon.status === 'Used' && coupon.creator === 'you' && (
+              <div className="text-center">
+                <p className="text-sm text-warm-white mb-2">
+                  Action Required
+                </p>
+                <p className="text-xs text-muted-text">
+                  You approved this coupon. Don't forget to fulfill it for your partner!
                 </p>
               </div>
             )}
             
+            {coupon.status === 'Fulfilled' && (
+              <div className="text-center">
+                <p className="text-sm text-gold mb-2">
+                  This coupon has been fulfilled! 🎉
+                </p>
+                <p className="text-xs text-muted-text">
+                  Hope it was magic.
+                </p>
+              </div>
+            )}
+
             {coupon.status === 'Active' && coupon.creator === 'you' && (
               <div className="text-center">
                 <p className="text-sm text-muted-text mb-2">
@@ -211,6 +282,65 @@ export default function CouponDetail() {
               </div>
             )}
           </div>
+
+          {/* Review Display */}
+          {coupon.reviewRating && (
+             <div className="bg-surface/30 p-6 rounded-2xl border border-border mb-8">
+               <h4 className="text-sm font-medium text-warm-white mb-3">
+                 {coupon.recipient === 'you' ? 'Your Review' : "Partner's Review"}
+               </h4>
+               <div className="flex items-center gap-1 mb-3">
+                 {[1, 2, 3, 4, 5].map((star) => (
+                   <Star
+                     key={star}
+                     className={`w-5 h-5 ${star <= coupon.reviewRating! ? 'text-gold fill-gold' : 'text-muted-text/30'}`}
+                   />
+                 ))}
+                 <span className="text-xs text-muted-text ml-2">
+                   ({coupon.reviewRating}/5)
+                 </span>
+               </div>
+               {coupon.reviewText && (
+                 <p className="text-sm text-warm-white/80 italic border-l-2 border-border pl-3">
+                   "{coupon.reviewText}"
+                 </p>
+               )}
+             </div>
+          )}
+
+          {/* Review Form */}
+          {coupon.status === 'Fulfilled' && coupon.recipient === 'you' && !coupon.reviewRating && (
+             <div className="bg-surface/30 p-6 rounded-2xl border border-border mb-8">
+               <h4 className="text-sm font-medium text-warm-white mb-4">Leave a Review</h4>
+               <div className="flex items-center justify-center gap-2 mb-6">
+                 {[1, 2, 3, 4, 5].map((star) => (
+                   <button
+                     key={star}
+                     onClick={() => setReviewRating(star)}
+                     className="focus:outline-none transition-transform active:scale-90"
+                   >
+                     <Star
+                       className={`w-8 h-8 ${star <= reviewRating ? 'text-gold fill-gold' : 'text-muted-text/30'}`}
+                     />
+                   </button> // Added trailing bracket
+                 ))}
+               </div>
+               {reviewRating > 0 && (
+                 <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
+                   <textarea
+                     className="w-full bg-background rounded-xl p-4 text-warm-white focus:outline-none focus:ring-1 focus:ring-border border border-border resize-none mb-4"
+                     placeholder="How was the experience? (Optional)"
+                     rows={3}
+                     value={reviewText}
+                     onChange={(e) => setReviewText(e.target.value)}
+                   />
+                   <Button variant="primary" fullWidth onClick={handleReviewSubmit} disabled={isUpdating}>
+                     {isUpdating ? 'Submitting...' : 'Submit Review'}
+                   </Button>
+                 </motion.div>
+               )}
+             </div>
+          )}
         </div>
 
         {/* Action Buttons */}
@@ -233,6 +363,17 @@ export default function CouponDetail() {
             disabled={isUpdating}
           >
             {isUpdating ? 'Approving...' : 'Approve Redemption'}
+          </Button>
+        )}
+
+        {coupon.status === 'Used' && coupon.creator === 'you' && (
+          <Button
+            variant="primary"
+            fullWidth
+            onClick={handleFulfill}
+            disabled={isUpdating}
+          >
+            {isUpdating ? 'Mark as Fulfilled...' : 'Mark as Fulfilled'}
           </Button>
         )}
       </div>
