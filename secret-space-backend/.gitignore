@@ -34,4 +34,4 @@ prisma/*.db
 prisma/migrations/migration_lock.toml
 
 # Face API models (large binary files)
-models/
+# models/
