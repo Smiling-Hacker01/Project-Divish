@@ -1,5 +1,11 @@
 {
   "appId": "com.thesecretspace.app",
   "appName": " The Secret Space",
-  "webDir": "dist"
+  "webDir": "dist",
+  "server": {
+    "allowNavigation": ["*.up.railway.app", "*.onrender.com"]
+  },
+  "android": {
+    "allowMixedContent": true
+  }
 }
