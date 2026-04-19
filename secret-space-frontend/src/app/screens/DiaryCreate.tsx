@@ -43,10 +43,7 @@ export default function DiaryCreate() {
     }
   };
 
-  const handleVideoSelect = () => {
-    alert('Video recording coming soon to native app!');
-  };
-
+  // Removed handleVideoSelect as it's purely UI now
   return (
     <MobileContainer>
       <div className="min-h-screen flex flex-col p-6">
@@ -126,12 +123,15 @@ export default function DiaryCreate() {
 
           {entryType === 'video' && (
             <div 
-              onClick={handleVideoSelect}
-              className="w-full h-64 bg-surface/50 border-2 border-dashed border-border rounded-2xl flex flex-col items-center justify-center text-muted-text hover:border-rose/50 transition-all cursor-pointer focus:outline-none"
+              className="w-full h-64 bg-surface/50 border-2 border-dashed border-border rounded-2xl flex flex-col items-center justify-center text-muted-text transition-all focus:outline-none"
             >
-              <Video className="w-12 h-12 mb-3" />
-              <p className="text-sm">Tap to select a video</p>
-              <p className="text-xs mt-1">Or record a new one</p>
+              <div className="w-16 h-16 bg-rose/10 rounded-full flex items-center justify-center mb-4">
+                <Video className="w-8 h-8 text-rose" />
+              </div>
+              <p className="text-warm-white font-medium mb-1">Video Diary</p>
+              <p className="text-sm text-muted-text flex items-center gap-2">
+                Coming soon <span className="inline-block animate-bounce">✨</span>
+              </p>
             </div>
           )}
         </div>
@@ -141,7 +141,7 @@ export default function DiaryCreate() {
           variant="primary"
           fullWidth
           onClick={handlePost}
-          disabled={(entryType === 'text' && !content) || isSubmitting}
+          disabled={!content || isSubmitting || entryType === 'video'}
         >
           {isSubmitting ? 'Posting...' : 'Post Entry'}
         </Button>

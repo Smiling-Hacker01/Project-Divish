@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import { MobileContainer } from '../components/MobileContainer';
-import { ArrowLeft, Plus, X, Camera as CameraIcon, Video, Image as ImageIcon, Lock } from 'lucide-react';
+import { ArrowLeft, Plus, X, Camera as CameraIcon, Video, Image as ImageIcon, Lock, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { vaultApi, VaultItem } from '../api/vault';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { triggerSync, onSync } from '../services/eventBus';
 
 export default function Vault() {
   const navigate = useNavigate();
@@ -16,6 +18,8 @@ export default function Vault() {
   const [showUploadSheet, setShowUploadSheet] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadSuccess, setDownloadSuccess] = useState(false);
 
   // If component mounts without a vault token, kick them back to unlock screen
   useEffect(() => {
@@ -35,6 +39,15 @@ export default function Vault() {
       }
     };
     fetchVaultItems();
+    
+    // Cross-device realtime sync
+    const interval = setInterval(fetchVaultItems, 5000);
+    const unsubscribe = onSync(fetchVaultItems);
+    
+    return () => {
+      clearInterval(interval);
+      unsubscribe();
+    };
   }, [vaultToken, navigate]);
 
   const handleUpload = async (type: 'camera' | 'video' | 'gallery') => {
@@ -52,6 +65,7 @@ export default function Vault() {
         setUploading(true);
         const newItem = await vaultApi.createItem(vaultToken, 'photo', image.base64String || '');
         setItems(prev => [newItem as VaultItem, ...prev]);
+        triggerSync();
       } else {
         alert('Video recording coming soon to native app!');
       }
@@ -67,8 +81,28 @@ export default function Vault() {
       await vaultApi.deleteItem(vaultToken, id);
       setItems(prev => prev.filter(item => item.id !== id));
       setSelectedItem(null);
+      triggerSync();
     } catch(e) {
       console.error(e);
+    }
+  };
+
+  const handleDownload = async () => {
+    if (!selectedItem || isDownloading) return;
+    setIsDownloading(true);
+    try {
+      const fileName = `Vault_Media_${Date.now()}.${selectedItem.type === 'photo' ? 'jpg' : 'mp4'}`;
+      await Filesystem.downloadFile({
+        url: selectedItem.url,
+        path: fileName,
+        directory: Directory.Documents,
+      });
+      setDownloadSuccess(true);
+      setTimeout(() => setDownloadSuccess(false), 2000);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsDownloading(false);
     }
   };
 
@@ -112,7 +146,7 @@ export default function Vault() {
             </button>
           </div>
           <p className="text-sm text-muted-text">
-            🔒 Private • Only visible to you
+            🔒 Shared Vault • Visible to you and your partner
           </p>
         </div>
 
@@ -123,7 +157,7 @@ export default function Vault() {
               <Lock className="w-16 h-16 text-muted-text/50 mx-auto mb-4" />
               <p className="text-muted-text mb-2">Your vault is empty</p>
               <p className="text-sm text-muted-text/70 mb-6">
-                Only you can see what's here
+                Only you and your partner can see what's here
               </p>
               <button
                 onClick={() => setShowUploadSheet(true)}
@@ -174,12 +208,23 @@ export default function Vault() {
               >
                 <X className="w-6 h-6 text-warm-white" />
               </button>
-              <button
-                onClick={() => handleDelete(selectedItem.id)}
-                className="px-4 py-2 bg-rose/20 text-rose rounded-xl hover:bg-rose/30 transition-colors focus:outline-none"
-              >
-                Delete
-              </button>
+              
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDownload}
+                  disabled={isDownloading}
+                  className="px-4 py-2 bg-surface/50 text-warm-white rounded-xl hover:bg-surface/70 transition-colors focus:outline-none flex items-center gap-2 disabled:opacity-50"
+                >
+                  <Download className="w-4 h-4" />
+                  {downloadSuccess ? 'Saved!' : isDownloading ? 'Saving...' : 'Save'}
+                </button>
+                <button
+                  onClick={() => handleDelete(selectedItem.id)}
+                  className="px-4 py-2 bg-rose/20 text-rose rounded-xl hover:bg-rose/30 transition-colors focus:outline-none"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
 
             {/* Media Viewer */}

@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import prisma from '../config/prisma';
 import { upsertMoodSchema } from '../utils/validators';
+import { sendPush } from '../services/notification.service';
 
 // ── POST /api/mood ─────────────────────────────────────────────────────────────
 export const upsertMood = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -19,6 +20,47 @@ export const upsertMood = async (req: Request, res: Response, next: NextFunction
       create: { coupleId, userId, mood },
       update: { mood },
     });
+
+    const partnerId = req.partnerId;
+    if (partnerId) {
+      let message = 'Your partner just updated their mood.';
+      switch (mood) {
+        case '😊':
+          message = 'Your partner is feeling happy today 😄 Share the joy with them!';
+          break;
+        case '❤️':
+          message = 'Your partner is feeling loved 💖 Keep the love going!';
+          break;
+        case '⚡':
+          message = 'Your partner is feeling productive ⚡ Rooting for them!';
+          break;
+        case '💭':
+          message = 'Your partner is missing you 💭 Give them a call or send some love.';
+          break;
+        case '😔':
+          message = 'Your partner might need you right now 💙 Check in and make them smile.';
+          break;
+        case '🌧':
+          message = 'Your partner is feeling low 🌧 They could really use your love today.';
+          break;
+        case '😣':
+          message = 'Your partner is feeling stressed 😞 Maybe they need some comfort.';
+          break;
+        case '😠':
+          message = 'Your partner seems a bit upset ⚡ Maybe it’s a good time to talk.';
+          break;
+        case '😤':
+          message = 'Your partner is feeling a bit grumpy 😤 Maybe send them a sweet surprise.';
+          break;
+      }
+      
+      await sendPush(
+        partnerId,
+        'Mood Update',
+        message,
+        { url: '/home' }
+      ).catch(e => console.error('[Push Error]', e));
+    }
 
     res.json({ success: true, mood });
   } catch (err) {

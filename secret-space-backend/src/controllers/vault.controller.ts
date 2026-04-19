@@ -47,8 +47,20 @@ export const getItems = async (req: Request, res: Response, next: NextFunction):
   try {
     const userId = req.user!.userId;
 
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: { coupleAsA: true, coupleAsB: true }
+    });
+
+    const ownerIds = [userId];
+    const couple = user?.coupleAsA || user?.coupleAsB;
+    if (couple) {
+      if (couple.userAId && !ownerIds.includes(couple.userAId)) ownerIds.push(couple.userAId);
+      if (couple.userBId && !ownerIds.includes(couple.userBId)) ownerIds.push(couple.userBId);
+    }
+
     const items = await prisma.vaultFile.findMany({
-      where: { ownerId: userId },
+      where: { ownerId: { in: ownerIds } },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -104,7 +116,22 @@ export const deleteItem = async (req: Request, res: Response, next: NextFunction
     const userId = req.user!.userId;
     const { id } = req.params;
 
-    const item = await prisma.vaultFile.findFirst({ where: { id, ownerId: userId } });
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: { coupleAsA: true, coupleAsB: true }
+    });
+
+    const ownerIds = [userId];
+    const couple = user?.coupleAsA || user?.coupleAsB;
+    if (couple) {
+      if (couple.userAId && !ownerIds.includes(couple.userAId)) ownerIds.push(couple.userAId);
+      if (couple.userBId && !ownerIds.includes(couple.userBId)) ownerIds.push(couple.userBId);
+    }
+
+    const item = await prisma.vaultFile.findFirst({ 
+      where: { id, ownerId: { in: ownerIds } } 
+    });
+    
     if (!item) {
       res.status(404).json({ error: 'Item not found' });
       return;

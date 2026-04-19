@@ -8,10 +8,14 @@ import { triggerSync } from '../services/eventBus';
 
 const moods = [
   { emoji: '😊', label: 'Happy', description: 'Feeling great!' },
-  { emoji: '😤', label: 'Grumpy', description: 'Not my best day' },
-  { emoji: '🌧', label: 'Low', description: 'Feeling down' },
+  { emoji: '❤️', label: 'Loved', description: 'Feeling affectionately' },
   { emoji: '⚡', label: 'Productive', description: 'Getting things done' },
   { emoji: '💭', label: 'Missing You', description: 'Wish we were together' },
+  { emoji: '😔', label: 'Sad', description: 'Feeling down' },
+  { emoji: '🌧', label: 'Low', description: 'Feeling drained' },
+  { emoji: '😣', label: 'Stressed', description: 'Under a lot of pressure' },
+  { emoji: '😠', label: 'Angry', description: 'Not my best day' },
+  { emoji: '😤', label: 'Grumpy', description: 'Feeling irritable' },
 ];
 
 export default function MoodCheckIn() {
