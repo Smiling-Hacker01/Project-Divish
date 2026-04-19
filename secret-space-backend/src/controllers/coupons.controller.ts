@@ -163,13 +163,35 @@ export const updateStatus = async (req: Request, res: Response, next: NextFuncti
       data: updateData,
     });
 
-    if (status === 'pending') {
-      await sendPush(
-        coupon.creatorId,
-        '💌 Coupon Redeemed!',
-        'Your partner just redeemed a coupon 💌 Time to make it special!',
-        { url: '/coupons' }
-      ).catch(e => console.error('[Push Error]', e));
+    // ── Send Push Notification based on lifecycle stage ──────────────────────
+    try {
+      if (status === 'pending') {
+        // Recipient redeemed it -> notify the Creator
+        await sendPush(
+          coupon.creatorId,
+          '💌 Coupon Redeemed!',
+          'Your partner just redeemed a coupon 💌 Time to make it special!',
+          { url: `/coupons` }
+        );
+      } else if (status === 'used') {
+        // Creator approved it -> notify the Recipient
+        await sendPush(
+          coupon.recipientId,
+          '✨ Redemption Approved!',
+          'Your partner approved your coupon! It will be fulfilled soon.',
+          { url: `/coupons` }
+        );
+      } else if (status === 'fulfilled') {
+        // Creator fulfilled it -> notify the Recipient
+        await sendPush(
+          coupon.recipientId,
+          '🎉 Coupon Fulfilled!',
+          'Your partner has worked their magic! Hope you enjoyed the coupon.',
+          { url: `/coupons` }
+        );
+      }
+    } catch (e: any) {
+      console.error('[Push Error] Coupon lifecycle:', e);
     }
 
     res.json({ success: true });
