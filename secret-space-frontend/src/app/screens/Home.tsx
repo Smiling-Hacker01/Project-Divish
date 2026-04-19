@@ -36,10 +36,10 @@ const dailyThoughts = [
 export default function Home() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  
+
   const [data, setData] = useState<DashboardData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  
+
   const [showPhotoSheet, setShowPhotoSheet] = useState(false);
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   const [showFullPhoto, setShowFullPhoto] = useState(false);
@@ -60,8 +60,13 @@ export default function Home() {
 
   useEffect(() => {
     fetchData();
+    const interval = setInterval(fetchData, 5000); // 5s cross-device poll
     // Subscribe to global sync events (background→foreground, mutations)
-    return onSync(fetchData);
+    const unsubscribe = onSync(fetchData);
+    return () => {
+      clearInterval(interval);
+      unsubscribe();
+    };
   }, [fetchData]);
 
   useEffect(() => {
@@ -77,7 +82,7 @@ export default function Home() {
           setActiveReason(data.todaysReason);
         }
       };
-      
+
       checkAndSet();
       const interval = setInterval(checkAndSet, 15000); // Re-calculate every 15s
       return () => clearInterval(interval);
@@ -96,7 +101,7 @@ export default function Home() {
     try {
       const image = await Camera.getPhoto({
         quality: 90,
-        allowEditing: false,
+        allowEditing: true,
         resultType: CameraResultType.Base64,
         source: CameraSource.Photos
       });
@@ -108,7 +113,7 @@ export default function Home() {
           setData(prev => prev ? { ...prev, couplePhoto: res.photoUrl } as DashboardData : null);
         }
       }
-    } catch(e) {
+    } catch (e) {
       console.log('User cancelled or camera failed', e);
     } finally {
       setIsLoading(false);
@@ -119,7 +124,7 @@ export default function Home() {
     try {
       await dashboardApi.removeCouplePhoto();
       setData(prev => prev ? { ...prev, couplePhoto: null } as DashboardData : null);
-    } catch(e) {
+    } catch (e) {
       console.error(e);
     } finally {
       setShowRemoveConfirm(false);
@@ -193,7 +198,7 @@ export default function Home() {
             {data.partnerStatus === 'active' ? (
               <span className="text-3xl">👤</span>
             ) : (
-              <span className="text-[10px] text-muted-text font-medium leading-tight px-2">Waiting<br/>for partner</span>
+              <span className="text-[10px] text-muted-text font-medium leading-tight px-2">Waiting<br />for partner</span>
             )}
           </div>
         </motion.div>
@@ -265,7 +270,7 @@ export default function Home() {
           <div className="absolute top-4 left-4 opacity-20">
             <Quote className="w-8 h-8 text-warm-white" />
           </div>
-          
+
           <button
             onClick={handleRefreshThought}
             className="absolute top-4 right-4 p-2 hover:bg-warm-white/10 rounded-lg transition-colors group focus:outline-none"
@@ -321,7 +326,7 @@ export default function Home() {
 
                 <div className="p-6">
                   <h2 className="text-xl font-bold text-warm-white mb-6">Couple Photo</h2>
-                  
+
                   <div className="space-y-3">
                     {data.couplePhoto && (
                       <button
@@ -404,7 +409,7 @@ export default function Home() {
               >
                 <h3 className="text-lg font-bold text-warm-white mb-2">Remove your couple photo?</h3>
                 <p className="text-sm text-muted-text mb-6">This will revert to the default avatar</p>
-                
+
                 <div className="space-y-3">
                   <Button variant="secondary" fullWidth onClick={handleRemovePhoto}>Remove</Button>
                   <Button variant="ghost" fullWidth onClick={() => setShowRemoveConfirm(false)} className="!text-muted-text">Cancel</Button>

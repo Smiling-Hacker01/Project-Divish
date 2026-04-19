@@ -4,7 +4,7 @@ import { MobileContainer } from '../components/MobileContainer';
 import { Button } from '../components/Button';
 import { ArrowLeft, Heart, Send, Plus, Pencil, Trash2, X, Check } from 'lucide-react';
 import { diaryApi, DiaryEntry } from '../api/diary';
-import { triggerSync } from '../services/eventBus';
+import { triggerSync, onSync } from '../services/eventBus';
 
 const EMOJIS = ['❤️', '😂', '😮', '😢', '🔥', '🙏'];
 
@@ -112,6 +112,15 @@ export default function DiaryDetail() {
       }
     };
     fetchEntry();
+    
+    // Cross-device realtime sync
+    const interval = setInterval(fetchEntry, 5000);
+    const unsubscribe = onSync(fetchEntry);
+    
+    return () => {
+      clearInterval(interval);
+      unsubscribe();
+    };
   }, [id]);
 
   const handleLike = async () => {

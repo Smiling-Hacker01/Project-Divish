@@ -24,13 +24,19 @@ export default function Diary() {
 
   useEffect(() => {
     fetchEntries();
-    return onSync(fetchEntries);
+    const interval = setInterval(fetchEntries, 5000);
+    const unsubscribe = onSync(fetchEntries);
+    return () => {
+      clearInterval(interval);
+      unsubscribe();
+    };
   }, [fetchEntries]);
 
   const formatTime = (timestamp: string) => {
     const date = new Date(timestamp);
     const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
+    // Use Math.max to prevent negative times if device clock is slightly behind server clock
+    const diffMs = Math.max(0, now.getTime() - date.getTime());
     const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
     
     if (diffHours < 1) {
