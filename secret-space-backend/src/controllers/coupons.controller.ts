@@ -109,6 +109,14 @@ export const createCoupon = async (req: Request, res: Response, next: NextFuncti
       },
     });
 
+    // Notify the recipient about the new coupon
+    await sendPush(
+      partnerId,
+      '🎟️ New Coupon!',
+      "You've received a new coupon 💌 Tap to explore and redeem it anytime!",
+      { url: '/coupons' }
+    ).catch(e => console.error('[Push Error] Coupon creation:', e));
+
     res.status(201).json({
       id: coupon.id,
       title: coupon.title,
@@ -230,6 +238,14 @@ export const fulfillCoupon = async (req: Request, res: Response, next: NextFunct
         fulfilledAt: new Date(),
       },
     });
+
+    // Notify the recipient that the coupon has been fulfilled + prompt for review
+    await sendPush(
+      coupon.recipientId,
+      '✨ Coupon Fulfilled!',
+      'Your coupon has been fulfilled ✨ Share your experience and help your partner make it even more special next time!',
+      { url: '/coupons' }
+    ).catch(e => console.error('[Push Error] Coupon fulfillment:', e));
 
     res.json({ success: true });
   } catch (err) {
