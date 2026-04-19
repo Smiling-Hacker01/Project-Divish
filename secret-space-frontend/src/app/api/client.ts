@@ -29,8 +29,8 @@ apiClient.interceptors.response.use(
   async (error: AxiosError) => {
     const originalRequest = error.config;
     
-    // Do not attempt token refresh or force logout for auth endpoints
-    if (originalRequest?.url?.includes('/auth/')) {
+    // Do not attempt token refresh or force logout for auth endpoints or vault unlock
+    if (originalRequest?.url?.includes('/auth/') || originalRequest?.url?.includes('/vault/unlock')) {
       return Promise.reject(error);
     }
 

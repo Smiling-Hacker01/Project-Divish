@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import prisma from '../config/prisma';
 import { createCouponSchema, updateCouponStatusSchema, couponReviewSchema } from '../utils/validators';
+import { sendPush } from '../services/notification.service';
 
 // ── GET /api/coupons ───────────────────────────────────────────────────────────
 export const getCoupons = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -161,6 +162,15 @@ export const updateStatus = async (req: Request, res: Response, next: NextFuncti
       where: { id },
       data: updateData,
     });
+
+    if (status === 'pending') {
+      await sendPush(
+        coupon.creatorId,
+        '💌 Coupon Redeemed!',
+        'Your partner just redeemed a coupon 💌 Time to make it special!',
+        { url: '/coupons' }
+      ).catch(e => console.error('[Push Error]', e));
+    }
 
     res.json({ success: true });
   } catch (err) {

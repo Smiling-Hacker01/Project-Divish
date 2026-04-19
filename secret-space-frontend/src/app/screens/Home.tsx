@@ -11,10 +11,14 @@ import { onSync } from '../services/eventBus';
 
 const moods = [
   { emoji: '😊', label: 'Happy', color: 'gold' },
-  { emoji: '😤', label: 'Grumpy', color: 'rose' },
-  { emoji: '🌧', label: 'Low', color: 'muted-text' },
+  { emoji: '❤️', label: 'Loved', color: 'rose' },
   { emoji: '⚡', label: 'Productive', color: 'gold' },
   { emoji: '💭', label: 'Missing You', color: 'rose' },
+  { emoji: '😔', label: 'Sad', color: 'muted-text' },
+  { emoji: '🌧', label: 'Low', color: 'muted-text' },
+  { emoji: '😣', label: 'Stressed', color: 'gold' },
+  { emoji: '😠', label: 'Angry', color: 'rose' },
+  { emoji: '😤', label: 'Grumpy', color: 'rose' },
 ];
 
 const dailyThoughts = [
