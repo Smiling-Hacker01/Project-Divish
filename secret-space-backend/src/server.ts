@@ -2,6 +2,7 @@ import app from './app';
 import prisma from './config/prisma';
 import redis from './config/redis';
 import logger from './config/logger';
+import './config/firebase'; // Initialize Firebase Admin SDK for push notifications
 import { loadModels } from './services/face.service';
 import { validateJwtConfig } from './utils/jwt';
 import { startLoveBotCron } from './jobs/lovebot.cron';
