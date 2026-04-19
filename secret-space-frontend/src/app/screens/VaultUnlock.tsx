@@ -98,15 +98,6 @@ export default function VaultUnlock() {
   return (
     <MobileContainer>
       <div className="min-h-screen flex flex-col p-6 bg-gradient-to-b from-background via-near-black to-background">
-        {/* Persistent Back Button */}
-        <button
-          onClick={() => navigate('/home')}
-          className="flex items-center gap-2 text-muted-text hover:text-warm-white transition-colors mb-4 self-start focus:outline-none"
-        >
-          <ArrowLeft className="w-5 h-5" />
-          <span className="text-sm font-medium">Back to Home</span>
-        </button>
-
         <div className="flex-1 flex flex-col items-center justify-center">
 
         {/* ── Stage: Initializing ──────────────────────────────────────── */}

@@ -120,7 +120,7 @@ export default function Vault() {
     <MobileContainer>
       <div className="min-h-screen pb-24 bg-gradient-to-b from-near-black via-background to-background">
         {/* Header - Darker theme for vault */}
-        <div className="sticky top-0 bg-near-black/95 backdrop-blur-sm z-10 p-6 pb-4 border-b border-border/50">
+        <div className="sticky top-0 bg-near-black/95 backdrop-blur-sm z-10 pt-8 px-6 pb-4 border-b border-border/50">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-4">
               <button onClick={() => navigate('/home')} className="focus:outline-none">
