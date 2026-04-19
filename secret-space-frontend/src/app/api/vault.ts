@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import { NativeBiometric, BiometryType } from '@capgo/capacitor-native-biometric';
+import { NativeBiometric, BiometryType, BiometricAuthError } from '@capgo/capacitor-native-biometric';
 
 export interface VaultItem {
   id: string;
@@ -26,7 +26,7 @@ export const checkBiometricAvailability = async (): Promise<BiometricStatus> => 
       return {
         available: false,
         biometryType: 'none',
-        reason: result.errorCode === 'BIOMETRIC_NOT_ENROLLED'
+        reason: result.errorCode === BiometricAuthError.BIOMETRICS_NOT_ENROLLED
           ? 'No fingerprint enrolled. Register one in device Settings.'
           : 'Biometric authentication is not available on this device.',
       };
