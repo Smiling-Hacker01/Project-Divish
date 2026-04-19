@@ -12,6 +12,7 @@
     "@capacitor/camera": "^8.0.2",
     "@capacitor/core": "^8.2.0",
     "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/push-notifications": "^8.0.3",
     "@capgo/capacitor-native-biometric": "^8.4.2",
     "@emotion/react": "11.14.0",
     "@emotion/styled": "11.14.1",

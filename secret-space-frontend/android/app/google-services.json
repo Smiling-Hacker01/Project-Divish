@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "497662814716",
+    "project_id": "divish-34127",
+    "storage_bucket": "divish-34127.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:497662814716:android:851363b7a32704e3406a79",
+        "android_client_info": {
+          "package_name": "com.thesecretspace.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCUByrAAWM5NfH1TMvpsit2bTt1tGE22OY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
