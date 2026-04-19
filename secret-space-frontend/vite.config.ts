@@ -25,7 +25,8 @@ export default defineConfig({
     allowedHosts: [
       'agreements-helping-pipeline-pose.trycloudflare.com',
       'localhost:5173',
-      'document-advertisements-left-yale.trycloudflare.com'
+      'document-advertisements-left-yale.trycloudflare.com',
+      'proud-forgiveness.railway.internal'
     ],
   },
 
