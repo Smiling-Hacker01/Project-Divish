@@ -36,7 +36,12 @@ export default function LoveBot() {
 
   useEffect(() => {
     loadSettings();
-    return onSync(loadSettings);
+    const interval = setInterval(loadSettings, 5000);
+    const unsubscribe = onSync(loadSettings);
+    return () => {
+      clearInterval(interval);
+      unsubscribe();
+    };
   }, [loadSettings]);
 
   const handleModeChange = async (newMode: LoveBotMode) => {

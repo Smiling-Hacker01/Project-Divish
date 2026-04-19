@@ -25,7 +25,12 @@ export default function Coupons() {
 
   useEffect(() => {
     fetchCoupons();
-    return onSync(fetchCoupons);
+    const interval = setInterval(fetchCoupons, 5000);
+    const unsubscribe = onSync(fetchCoupons);
+    return () => {
+      clearInterval(interval);
+      unsubscribe();
+    };
   }, [fetchCoupons]);
 
   const filteredCoupons = coupons.filter(c => {
