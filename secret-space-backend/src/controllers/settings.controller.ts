@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import prisma from '../config/prisma';
+import logger from '../config/logger';
 import { updateProfileSchema } from '../utils/validators';
 
 // ── GET /api/settings/profile ──────────────────────────────────────────────────
@@ -90,6 +91,29 @@ export const unlinkPartner = async (req: Request, res: Response, next: NextFunct
       data: { userBId: null, status: 'waiting' },
     });
 
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ── PUT /api/settings/fcm-token ────────────────────────────────────────────────
+export const updateFcmToken = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const userId = req.user!.userId;
+    const { token } = req.body;
+
+    if (!token || typeof token !== 'string') {
+      res.status(400).json({ error: 'FCM token is required' });
+      return;
+    }
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { fcmToken: token },
+    });
+
+    logger.info({ userId }, '[Settings] FCM token registered');
     res.json({ success: true });
   } catch (err) {
     next(err);

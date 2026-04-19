@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User } from '../types/auth';
+import { initPushNotifications } from '../services/pushNotifications';
 
 interface AuthContextType {
   user: User | null;
@@ -24,6 +25,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (storedUser && token) {
       try {
         setUser(JSON.parse(storedUser));
+        // User is already logged in from a previous session — register push
+        initPushNotifications().catch(() => {});
       } catch {
         // failed to parse
       }
@@ -35,6 +38,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(userData);
     localStorage.setItem('userData', JSON.stringify(userData));
     localStorage.setItem('accessToken', token);
+    // Register push notifications after successful login
+    initPushNotifications().catch(() => {});
   };
 
   const logoutState = () => {
