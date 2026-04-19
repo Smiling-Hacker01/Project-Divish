@@ -15,8 +15,11 @@ import { sendPush } from '../services/notification.service';
 export const startLoveBotCron = (): void => {
   cron.schedule('* * * * *', async () => {
     try {
-      const now = new Date();
-      const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      // Force India Standard Time (IST) offset for correct matching with user inputs
+      const utcTime = new Date();
+      const now = new Date(utcTime.getTime() + (5.5 * 60 * 60 * 1000));
+      
+      const currentTime = `${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`;
       const todayKey = now.toISOString().split('T')[0]; // YYYY-MM-DD
 
       // Find active couples

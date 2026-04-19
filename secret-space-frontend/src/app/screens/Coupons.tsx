@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router';
 import { MobileContainer } from '../components/MobileContainer';
 import { ArrowLeft, Plus, Ticket, Star } from 'lucide-react';
 import { motion } from 'motion/react';
 import { couponsApi, Coupon } from '../api/coupons';
+import { onSync } from '../services/eventBus';
 
 export default function Coupons() {
   const navigate = useNavigate();
@@ -11,19 +12,21 @@ export default function Coupons() {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchCoupons = async () => {
-      try {
-        const data = await couponsApi.getCoupons();
-        setCoupons(data);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchCoupons();
+  const fetchCoupons = useCallback(async () => {
+    try {
+      const data = await couponsApi.getCoupons();
+      setCoupons(data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchCoupons();
+    return onSync(fetchCoupons);
+  }, [fetchCoupons]);
 
   const filteredCoupons = coupons.filter(c => {
     if (tab === 'to-fulfill') return c.status === 'Used' && c.creator === 'you';

@@ -6,6 +6,7 @@ import { MobileContainer } from '../components/MobileContainer';
 import { ArrowLeft, Calendar } from 'lucide-react';
 import { motion } from 'motion/react';
 import { couponsApi } from '../api/coupons';
+import { triggerSync } from '../services/eventBus';
 
 export default function CouponCreate() {
   const navigate = useNavigate();
@@ -28,6 +29,7 @@ export default function CouponCreate() {
       };
       // We typecast as any to bypass the Partial<Coupon> interface strictness for expiresAt
       await couponsApi.createCoupon(payload as any);
+      triggerSync();
       navigate('/coupons');
     } catch(e: any) {
       console.error(e);
