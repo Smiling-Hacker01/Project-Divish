@@ -42,7 +42,7 @@ secret-space-backend/prisma/*.db
 secret-space-backend/prisma/migrations/migration_lock.toml
 
 # Face API models (large binary files)
-secret-space-backend/models/
+# secret-space-backend/models/
 
 # Package lock (optional — remove this line if you want to track it)
 # package-lock.json
