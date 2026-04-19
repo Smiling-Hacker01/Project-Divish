@@ -20,7 +20,11 @@ export interface BiometricStatus {
  */
 export const checkBiometricAvailability = async (): Promise<BiometricStatus> => {
   try {
-    const result = await NativeBiometric.isAvailable();
+    // Passing useFallback: true is CRITICAL for Android devices with physical/rear-mounted 
+    // fingerprint scanners. By default, Capacitor Biometric strictly requires BIOMETRIC_STRONG.
+    // Many budget and physical sensors are classified as BIOMETRIC_WEAK. 
+    // useFallback relaxes this constraint to BIOMETRIC_WEAK | DEVICE_CREDENTIAL.
+    const result = await NativeBiometric.isAvailable({ useFallback: true });
 
     if (!result.isAvailable) {
       return {
@@ -64,6 +68,7 @@ export const vaultApi = {
         title: 'Vault Unlock',
         subtitle: 'Use your biometric to unlock',
         description: 'Verify your identity to access private content',
+        useFallback: true, // Crucial for physical/rear fingerprint sensor compatibility on Android
       });
     } catch (e: any) {
       // Provide specific, user-friendly messages based on the native error
