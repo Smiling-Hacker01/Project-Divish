@@ -4,6 +4,7 @@ import { MobileContainer } from '../components/MobileContainer';
 import { ArrowLeft } from 'lucide-react';
 import { motion } from 'motion/react';
 import { dashboardApi } from '../api/dashboard';
+import { triggerSync } from '../services/eventBus';
 
 const moods = [
   { emoji: '😊', label: 'Happy', description: 'Feeling great!' },
@@ -41,6 +42,7 @@ export default function MoodCheckIn() {
     
     try {
       await dashboardApi.updateMood(emoji);
+      triggerSync();
       // Animate and navigate back
       setTimeout(() => {
         navigate('/home');

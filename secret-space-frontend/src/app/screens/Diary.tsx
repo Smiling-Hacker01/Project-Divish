@@ -1,28 +1,31 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router';
 import { MobileContainer } from '../components/MobileContainer';
 import { ArrowLeft, Plus, Heart, MessageCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 import { diaryApi, DiaryEntry } from '../api/diary';
+import { onSync } from '../services/eventBus';
 
 export default function Diary() {
   const navigate = useNavigate();
   const [entries, setEntries] = useState<DiaryEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchEntries = async () => {
-      try {
-        const data = await diaryApi.getEntries();
-        setEntries(data);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchEntries();
+  const fetchEntries = useCallback(async () => {
+    try {
+      const data = await diaryApi.getEntries();
+      setEntries(data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchEntries();
+    return onSync(fetchEntries);
+  }, [fetchEntries]);
 
   const formatTime = (timestamp: string) => {
     const date = new Date(timestamp);

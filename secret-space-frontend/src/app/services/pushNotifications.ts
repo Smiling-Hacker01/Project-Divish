@@ -3,6 +3,38 @@ import { Capacitor } from '@capacitor/core';
 import { apiClient } from '../api/client';
 
 /**
+ * Checks if push notification permissions are already granted.
+ */
+export const checkPushPermissions = async (): Promise<boolean> => {
+  if (!Capacitor.isNativePlatform()) return false;
+  try {
+    const status = await PushNotifications.checkPermissions();
+    return status.receive === 'granted';
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Manually request push notification permissions.
+ * Useful for UI buttons if the user originally skipped/denied the prompt.
+ */
+export const requestPushPermissions = async (): Promise<boolean> => {
+  if (!Capacitor.isNativePlatform()) return false;
+  try {
+    const result = await PushNotifications.requestPermissions();
+    if (result.receive === 'granted') {
+      // If just granted, ensure we register for the token immediately
+      await PushNotifications.register();
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+};
+
+/**
  * Initializes push notification registration and event handling.
  * Safe to call on web (gracefully no-ops if not on a native platform).
  * Should be called once after the user has logged in.

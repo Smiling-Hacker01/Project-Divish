@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router';
 import { MobileContainer } from '../components/MobileContainer';
-import { ArrowLeft, Plus, Trash2, Clock } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Clock, BellRing, ShieldAlert } from 'lucide-react';
 import { loveBotApi, LoveBotMode, LoveReason } from '../api/lovebot';
+import { onSync } from '../services/eventBus';
+import { checkPushPermissions, requestPushPermissions } from '../services/pushNotifications';
 
 export default function LoveBot() {
   const navigate = useNavigate();
@@ -11,25 +13,31 @@ export default function LoveBot() {
   const [reasons, setReasons] = useState<LoveReason[]>([]);
   const [isCreator, setIsCreator] = useState(false);
   const [partnerEnabled, setPartnerEnabled] = useState(false);
+  const [pushGranted, setPushGranted] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    const loadSettings = async () => {
-      try {
-        const data = await loveBotApi.getSettings();
-        setMode(data.mode);
-        setSendTime(data.time);
-        setReasons(data.reasons);
-        setIsCreator(data.isCreator);
-        setPartnerEnabled(data.userBAccessGranted);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    loadSettings();
+  const loadSettings = useCallback(async () => {
+    try {
+      const data = await loveBotApi.getSettings();
+      setMode(data.mode);
+      setSendTime(data.time);
+      setReasons(data.reasons);
+      setIsCreator(data.isCreator);
+      setPartnerEnabled(data.userBAccessGranted);
+      
+      const hasPush = await checkPushPermissions();
+      setPushGranted(hasPush);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadSettings();
+    return onSync(loadSettings);
+  }, [loadSettings]);
 
   const handleModeChange = async (newMode: LoveBotMode) => {
     setMode(newMode);
@@ -117,6 +125,32 @@ export default function LoveBot() {
         <p className="text-muted-text mb-8">
           Automatically send daily love reasons to keep the romance alive
         </p>
+
+        {/* Push Notification Warning */}
+        {!pushGranted && mode !== 'off' && (
+          <div className="mb-8 p-4 bg-rose/10 border border-rose/30 rounded-2xl">
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 w-8 h-8 bg-rose/20 rounded-full flex items-center justify-center">
+                <ShieldAlert className="w-4 h-4 text-rose" />
+              </div>
+              <div>
+                <h3 className="text-sm font-medium text-warm-white">Notifications Disabled</h3>
+                <p className="text-sm text-muted-text mt-1 mb-3">
+                  Love Bot is active, but you won't get push notifications when your partner sends you a reason.
+                </p>
+                <button
+                  onClick={async () => {
+                    const granted = await requestPushPermissions();
+                    setPushGranted(granted);
+                  }}
+                  className="px-4 py-2 bg-rose rounded-xl text-sm font-medium text-warm-white hover:bg-rose/90 transition-colors focus:outline-none flex items-center gap-2"
+                >
+                  <BellRing className="w-4 h-4" /> Enable Notifications
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Partner Access Toggle (Only for Initiator) */}
         {isCreator && (

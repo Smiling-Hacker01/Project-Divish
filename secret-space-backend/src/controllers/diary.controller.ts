@@ -270,14 +270,57 @@ export const reactToComment = async (req: Request, res: Response, next: NextFunc
   }
 };
 
+// ── PUT /api/diary/:id ─────────────────────────────────────────────────────────
+export const editEntry = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const userId = req.user!.userId;
+    const { id } = req.params;
+    const coupleId = req.coupleId!;
+    const { content } = req.body;
+
+    if (!content || typeof content !== 'string' || content.trim().length === 0) {
+      res.status(400).json({ error: 'Content is required' });
+      return;
+    }
+
+    const entry = await prisma.diaryEntry.findFirst({ where: { id, coupleId } });
+    if (!entry) {
+      res.status(404).json({ error: 'Entry not found' });
+      return;
+    }
+    if (entry.authorId !== userId) {
+      res.status(403).json({ error: 'You can only edit your own entries' });
+      return;
+    }
+    if (entry.type !== 'text') {
+      res.status(400).json({ error: 'Only text entries can be edited' });
+      return;
+    }
+
+    await prisma.diaryEntry.update({
+      where: { id },
+      data: { content: content.trim() },
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+};
+
 // ── DELETE /api/diary/:id ──────────────────────────────────────────────────────
+// Soft-delete: replaces content with a tombstone message instead of removing the row.
+// This lets the partner see that something was deleted (preserves conversation context).
 export const deleteEntry = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const userId = req.user!.userId;
     const { id } = req.params;
     const coupleId = req.coupleId!;
 
-    const entry = await prisma.diaryEntry.findFirst({ where: { id, coupleId } });
+    const entry = await prisma.diaryEntry.findFirst({
+      where: { id, coupleId },
+      include: { author: { select: { name: true } } },
+    });
     if (!entry) {
       res.status(404).json({ error: 'Entry not found' });
       return;
@@ -287,7 +330,20 @@ export const deleteEntry = async (req: Request, res: Response, next: NextFunctio
       return;
     }
 
-    await prisma.diaryEntry.delete({ where: { id } });
+    const tombstone = `🗑️ ${entry.author.name} removed this diary entry.`;
+
+    await prisma.diaryEntry.update({
+      where: { id },
+      data: {
+        content: tombstone,
+        mediaUrl: null,
+        type: 'text',
+      },
+    });
+
+    // Clean up reactions/comments on the deleted entry
+    await prisma.diaryReaction.deleteMany({ where: { entryId: id } });
+
     res.json({ success: true });
   } catch (err) {
     next(err);

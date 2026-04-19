@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { MobileContainer } from '../components/MobileContainer';
 import { Button } from '../components/Button';
-import { ArrowLeft, Heart, Send, Plus } from 'lucide-react';
+import { ArrowLeft, Heart, Send, Plus, Pencil, Trash2, X, Check } from 'lucide-react';
 import { diaryApi, DiaryEntry } from '../api/diary';
+import { triggerSync } from '../services/eventBus';
 
 const EMOJIS = ['❤️', '😂', '😮', '😢', '🔥', '🙏'];
 
@@ -19,6 +20,45 @@ export default function DiaryDetail() {
   const [isLiking, setIsLiking] = useState(false);
   const [isCommenting, setIsCommenting] = useState(false);
   const [activeReactionCommentId, setActiveReactionCommentId] = useState<string | null>(null);
+
+  // Edit/Delete state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState('');
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const isTombstone = entry?.content?.startsWith('🗑️') && entry?.author === 'partner';
+
+  const handleEdit = async () => {
+    if (!id || !editContent.trim() || isSavingEdit) return;
+    setIsSavingEdit(true);
+    try {
+      await diaryApi.editEntry(id, editContent.trim());
+      setEntry(prev => prev ? { ...prev, content: editContent.trim() } : null);
+      setIsEditing(false);
+      triggerSync();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!id || isDeleting) return;
+    setIsDeleting(true);
+    try {
+      await diaryApi.deleteEntry(id);
+      triggerSync();
+      navigate('/diary');
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  };
 
   const handleReact = async (commentId: string, emoji: string) => {
     setActiveReactionCommentId(null);
@@ -158,15 +198,61 @@ export default function DiaryDetail() {
     <MobileContainer>
       <div className="min-h-screen flex flex-col">
         {/* Header */}
-        <div className="sticky top-0 bg-background/95 backdrop-blur-sm z-10 p-6 pb-4 border-b border-border">
+        <div className="sticky top-0 bg-background/95 backdrop-blur-sm z-10 p-6 pb-4 border-b border-border flex items-center justify-between">
           <button onClick={() => navigate('/diary')} className="focus:outline-none">
             <ArrowLeft className="w-6 h-6 text-warm-white" />
           </button>
+          {/* Edit/Delete actions — only for your own non-tombstone text entries */}
+          {entry.author === 'you' && !isTombstone && (
+            <div className="flex items-center gap-2">
+              {entry.type === 'text' && (
+                <button
+                  onClick={() => { setIsEditing(true); setEditContent(entry.content); }}
+                  className="p-2 rounded-lg hover:bg-surface/50 transition-colors focus:outline-none"
+                >
+                  <Pencil className="w-5 h-5 text-muted-text" />
+                </button>
+              )}
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                className="p-2 rounded-lg hover:bg-rose/20 transition-colors focus:outline-none"
+              >
+                <Trash2 className="w-5 h-5 text-rose" />
+              </button>
+            </div>
+          )}
         </div>
+
+        {/* Delete Confirmation Dialog */}
+        {showDeleteConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-near-black/80 backdrop-blur-sm p-6">
+            <div className="bg-surface border border-border rounded-2xl p-6 max-w-sm w-full">
+              <h3 className="text-lg font-bold text-warm-white mb-2">Delete this entry?</h3>
+              <p className="text-sm text-muted-text mb-6">
+                This entry will be replaced with a notice that you removed it. Your partner will still see that something was here.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="flex-1 py-2.5 bg-surface/50 border border-border rounded-xl text-warm-white font-medium focus:outline-none"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDelete}
+                  disabled={isDeleting}
+                  className="flex-1 py-2.5 bg-rose rounded-xl text-warm-white font-medium disabled:opacity-50 focus:outline-none"
+                >
+                  {isDeleting ? 'Deleting...' : 'Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Entry Content */}
         <div className="flex-1 p-6">
-          <div className="bg-surface/50 p-6 rounded-2xl border border-border mb-6">
+          <div className={`bg-surface/50 p-6 rounded-2xl border mb-6 ${isTombstone ? 'border-border/50 opacity-60' : 'border-border'}`}>
             {/* Author */}
             <div className="flex items-center gap-3 mb-4">
               <div className={`w-12 h-12 rounded-full ${
@@ -174,7 +260,7 @@ export default function DiaryDetail() {
                   ? 'bg-gradient-to-br from-rose/30 to-rose/10 border-2 border-rose' 
                   : 'bg-gradient-to-br from-gold/30 to-gold/10 border-2 border-gold'
               } flex items-center justify-center text-2xl`}>
-                👤
+                {isTombstone ? '🗑️' : '👤'}
               </div>
               <div>
                 <p className="text-warm-white font-medium">
@@ -187,7 +273,36 @@ export default function DiaryDetail() {
             </div>
 
             {/* Content */}
-            {(entry.type === 'image' || (entry.type as string) === 'photo' || entry.content.startsWith('http')) ? (
+            {isTombstone ? (
+              <p className="text-muted-text italic leading-relaxed mb-6">
+                {entry.content}
+              </p>
+            ) : isEditing ? (
+              <div className="mb-6 space-y-3">
+                <textarea
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
+                  rows={4}
+                  className="w-full px-4 py-3 bg-surface/70 border border-rose/50 rounded-xl text-warm-white placeholder:text-muted-text focus:outline-none focus:ring-2 focus:ring-rose/50 resize-none"
+                  autoFocus
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setIsEditing(false)}
+                    className="flex-1 py-2.5 bg-surface/50 border border-border rounded-xl text-warm-white font-medium flex items-center justify-center gap-2 focus:outline-none"
+                  >
+                    <X className="w-4 h-4" /> Cancel
+                  </button>
+                  <button
+                    onClick={handleEdit}
+                    disabled={isSavingEdit || !editContent.trim()}
+                    className="flex-1 py-2.5 bg-rose rounded-xl text-warm-white font-medium disabled:opacity-50 flex items-center justify-center gap-2 focus:outline-none"
+                  >
+                    <Check className="w-4 h-4" /> {isSavingEdit ? 'Saving...' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            ) : (entry.type === 'image' || (entry.type as string) === 'photo' || entry.content.startsWith('http')) ? (
               <div className="w-full mb-6 rounded-xl overflow-hidden bg-surface/50 border border-border">
                 <img 
                   src={entry.content} 
@@ -201,7 +316,8 @@ export default function DiaryDetail() {
               </p>
             )}
 
-            {/* Like Button */}
+            {/* Like Button — hide on tombstone entries */}
+            {!isTombstone && (
             <button
               onClick={handleLike}
               disabled={isLiking}
@@ -212,6 +328,7 @@ export default function DiaryDetail() {
               <Heart className={`w-6 h-6 ${liked ? 'fill-rose' : ''}`} />
               <span>{entry.likes}</span>
             </button>
+            )}
           </div>
 
           {/* Comments */}

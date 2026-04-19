@@ -50,6 +50,11 @@ export const diaryApi = {
     return res.data;
   },
 
+  editEntry: async (id: string, content: string) => {
+    const res = await apiClient.put(`/diary/${id}`, { content });
+    return res.data;
+  },
+
   deleteEntry: async (id: string) => {
     const res = await apiClient.delete(`/diary/${id}`);
     return res.data;

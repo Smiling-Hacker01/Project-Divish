@@ -5,6 +5,7 @@ import {
   getEntries,
   getEntry,
   createEntry,
+  editEntry,
   likeEntry,
   addComment,
   deleteEntry,
@@ -18,6 +19,7 @@ router.use(verifyJWT, requireCouple);
 router.get('/', getEntries);
 router.get('/:id', getEntry);
 router.post('/', createEntry);
+router.put('/:id', editEntry);
 router.post('/:id/like', likeEntry);
 router.post('/:id/comments', addComment);
 router.post('/:id/comments/:commentId/react', reactToComment);

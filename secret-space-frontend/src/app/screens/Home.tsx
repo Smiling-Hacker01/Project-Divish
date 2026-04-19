@@ -2,11 +2,12 @@ import { useNavigate } from 'react-router';
 import { MobileContainer } from '../components/MobileContainer';
 import { Heart, BookHeart, Ticket, Bot, Lock, Settings, Camera as CameraIcon, Quote, RefreshCw, Eye, Trash2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Button } from '../components/Button';
 import { dashboardApi, DashboardData } from '../api/dashboard';
 import { useAuth } from '../context/AuthContext';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
+import { onSync } from '../services/eventBus';
 
 const moods = [
   { emoji: '😊', label: 'Happy', color: 'gold' },
@@ -45,20 +46,23 @@ export default function Home() {
   const [dailyThought, setDailyThought] = useState("");
   const [activeReason, setActiveReason] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const result = await dashboardApi.getHomeData();
-        setData(result);
-        setDailyThought(result.dailyThought);
-      } catch (e) {
-        console.error("Failed to load dashboard data", e);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchData();
+  const fetchData = useCallback(async () => {
+    try {
+      const result = await dashboardApi.getHomeData();
+      setData(result);
+      setDailyThought(result.dailyThought);
+    } catch (e) {
+      console.error("Failed to load dashboard data", e);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchData();
+    // Subscribe to global sync events (background→foreground, mutations)
+    return onSync(fetchData);
+  }, [fetchData]);
 
   useEffect(() => {
     if (!data) return;
@@ -66,8 +70,8 @@ export default function Home() {
     if (data.nextReasonText && data.nextReasonDeliveryTime) {
       const checkAndSet = () => {
         const now = new Date();
-        const currentUTC = `${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`;
-        if (currentUTC >= data.nextReasonDeliveryTime!) {
+        const currentLocal = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        if (currentLocal >= data.nextReasonDeliveryTime!) {
           setActiveReason(data.nextReasonText);
         } else {
           setActiveReason(data.todaysReason);
@@ -92,7 +96,7 @@ export default function Home() {
     try {
       const image = await Camera.getPhoto({
         quality: 90,
-        allowEditing: true,
+        allowEditing: false,
         resultType: CameraResultType.Base64,
         source: CameraSource.Photos
       });

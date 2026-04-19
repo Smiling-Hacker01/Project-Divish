@@ -5,6 +5,7 @@ import { MobileContainer } from '../components/MobileContainer';
 import { ArrowLeft, Type, Image as ImageIcon, Video } from 'lucide-react';
 import { diaryApi } from '../api/diary';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
+import { triggerSync } from '../services/eventBus';
 
 type EntryType = 'text' | 'image' | 'video';
 
@@ -18,6 +19,7 @@ export default function DiaryCreate() {
     setIsSubmitting(true);
     try {
       await diaryApi.createEntry({ type: entryType, content });
+      triggerSync();
       navigate('/diary');
     } catch (e) {
       console.error(e);
