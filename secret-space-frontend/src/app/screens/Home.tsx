@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router';
 import { MobileContainer } from '../components/MobileContainer';
-import { Heart, BookHeart, Ticket, Bot, Lock, Settings, Camera as CameraIcon, Quote, RefreshCw, Eye, Trash2, X } from 'lucide-react';
+import { Heart, BookHeart, Ticket, Bot, Lock, Settings, Camera as CameraIcon, Quote, RefreshCw, Eye, Trash2, X, MessageSquare } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useState, useEffect, useCallback } from 'react';
 import { Button } from '../components/Button';
@@ -137,6 +137,7 @@ export default function Home() {
   };
 
   const quickActions = [
+    { icon: MessageSquare, label: 'Chat', path: '/chat', color: 'rose' },
     { icon: BookHeart, label: 'Diary', path: '/diary', color: 'rose' },
     { icon: Ticket, label: 'Coupons', path: '/coupons', color: 'gold' },
     { icon: Bot, label: 'Love Bot', path: '/lovebot', color: 'rose' },
@@ -298,7 +299,7 @@ export default function Home() {
                 onClick={() => navigate(action.path)}
                 className="flex flex-col items-center gap-2 p-4 bg-surface/50 rounded-2xl border border-border hover:border-rose/50 transition-all active:scale-[0.98] outline-none"
               >
-                <action.icon className="w-8 h-8" style={{ color: action.color === 'rose' ? '#e74c8b' : action.color === 'gold' ? '#f1c40f' : '#888' }} />
+                <action.icon className="w-8 h-8" style={{ color: action.color === 'rose' ? 'var(--rose)' : action.color === 'gold' ? 'var(--gold)' : 'var(--muted-text)' }} />
                 <span className="text-sm text-warm-white font-medium">{action.label}</span>
               </button>
             ))}

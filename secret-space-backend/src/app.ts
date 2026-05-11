@@ -12,6 +12,7 @@ import vaultRoutes from './routes/vault.routes';
 import lovebotRoutes from './routes/lovebot.routes';
 import dashboardRoutes from './routes/dashboard.routes';
 import settingsRoutes from './routes/settings.routes';
+import chatRoutes from './routes/chat.routes';
 import { errorHandler } from './middlewares/errorHandler';
 
 const app = express();
@@ -45,6 +46,7 @@ app.use('/api/vault', vaultRoutes);
 app.use('/api/lovebot', lovebotRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/chat', chatRoutes);
 
 // ── Push Notification Diagnostic (TEMPORARY — remove after debugging) ─────────
 app.get('/api/debug/push-test', async (_req, res) => {
