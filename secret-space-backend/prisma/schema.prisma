@@ -13,6 +13,7 @@ model User {
   email        String   @unique
   passwordHash String   @map("password_hash")
   fcmToken     String?  @map("fcm_token")
+  publicKey    String?  @map("public_key")
   createdAt    DateTime @default(now()) @map("created_at")
 
   // Relations
@@ -27,6 +28,7 @@ model User {
   vaultFiles       VaultFile[]
   authoredReasons  LoveReason[]     @relation("ReasonAuthor")
   receivedReasons  LoveReason[]     @relation("ReasonRecipient")
+  sentMessages     Message[]        @relation("SentMessages")
 
   @@map("users")
 }
@@ -56,6 +58,7 @@ model Couple {
   moods        Mood[]
   coupons      Coupon[]
   loveReasons  LoveReason[]
+  messages     Message[]
 
   @@map("couples")
 }
@@ -167,4 +170,29 @@ model VaultFile {
   createdAt    DateTime @default(now()) @map("created_at")
 
   @@map("vault_files")
+}
+
+model Message {
+  id              String   @id @default(uuid())
+  couple          Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+  coupleId        String   @map("couple_id")
+  sender          User     @relation("SentMessages", fields: [senderId], references: [id])
+  senderId        String   @map("sender_id")
+  content         String?  
+  mediaUrl        String?  @map("media_url")
+  mediaType       String?  @map("media_type")
+  senderAesKey      String?  @map("sender_aes_key")
+  recipientAesKey   String?  @map("recipient_aes_key")
+  status            String   @default("sent")
+  
+  deletedForSender  Boolean  @default(false) @map("deleted_for_sender")
+  deletedForEveryone Boolean @default(false) @map("deleted_for_everyone")
+  reactions         Json?    @default("{}")
+  deliveredAt       DateTime? @map("delivered_at")
+  readAt            DateTime? @map("read_at")
+
+  createdAt         DateTime @default(now()) @map("created_at")
+  
+  @@index([coupleId, createdAt])
+  @@map("messages")
 }
