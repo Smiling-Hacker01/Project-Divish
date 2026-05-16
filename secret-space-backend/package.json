@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "The Secret Space — Couple OS Backend",
   "main": "dist/server.js",
+  "engines": {
+    "node": "22.x",
+    "npm": ">=10"
+  },
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "prisma generate && tsc",
