@@ -1,0 +1,77 @@
+{
+  "expo": {
+    "name": "The Secret Space",
+    "slug": "secret-space-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "secretspace",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#0D0D0F",
+      "resizeMode": "contain"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.divish.secretspace",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Use the camera to capture photos and videos for your shared space.",
+        "NSPhotoLibraryUsageDescription": "Allow access to your photo library to share memories with your partner.",
+        "NSFaceIDUsageDescription": "Use Face ID to unlock the vault and sign in securely.",
+        "NSMicrophoneUsageDescription": "Allow microphone access to send voice messages to your partner.",
+        "UIBackgroundModes": ["remote-notification"]
+      }
+    },
+    "android": {
+      "package": "com.divish.secretspace",
+      "adaptiveIcon": {
+        "backgroundColor": "#0D0D0F"
+      },
+      "permissions": [
+        "CAMERA",
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT",
+        "RECORD_AUDIO",
+        "READ_EXTERNAL_STORAGE",
+        "POST_NOTIFICATIONS"
+      ],
+      "googleServicesFile": "./google-services.json"
+    },
+    "plugins": [
+      "expo-font",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow access to your photo library to share memories with your partner.",
+          "cameraPermission": "Use the camera to capture photos and videos to share."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow camera access to enroll Face ID."
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Use Face ID to unlock the vault."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#0D0D0F",
+          "androidMode": "default",
+          "androidCollapsedTitle": "Secret Space"
+        }
+      ],
+      "expo-asset",
+      "@react-native-community/datetimepicker"
+    ],
+    "extra": {
+      "apiBaseUrl": "http://localhost:5050/api"
+    }
+  }
+}

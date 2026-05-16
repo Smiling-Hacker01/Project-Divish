@@ -103,7 +103,7 @@ async function processUserCronRule(coupleId: string, senderId: string, recipient
       recipientId,
       '💌 Love Note Delivered',
       `You have a new message from ${sender?.name} 💌`,
-      { url: '/home' }
+      { type: 'lovebot', url: '/home' }
     );
 
     logger.info({ coupleId, recipientId, reasonId: reason.id }, '[LoveBot] Reason sent');

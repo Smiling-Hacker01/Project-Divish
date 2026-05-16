@@ -37,6 +37,8 @@ export const getEntries = async (req: Request, res: Response, next: NextFunction
         timestamp: entry.createdAt.toISOString(),
         likes,
         comments,
+        deletedAt: (entry as any).deletedAt ? (entry as any).deletedAt.toISOString() : null,
+        editedAt: (entry as any).editedAt ? (entry as any).editedAt.toISOString() : null,
       };
     });
 
@@ -105,6 +107,8 @@ export const getEntry = async (req: Request, res: Response, next: NextFunction):
       likes,
       comments: commentsList.length,
       commentsList,
+      deletedAt: (entry as any).deletedAt ? (entry as any).deletedAt.toISOString() : null,
+      editedAt: (entry as any).editedAt ? (entry as any).editedAt.toISOString() : null,
     });
   } catch (err) {
     next(err);
@@ -297,12 +301,13 @@ export const editEntry = async (req: Request, res: Response, next: NextFunction)
       return;
     }
 
+    const editedAt = new Date();
     await prisma.diaryEntry.update({
       where: { id },
-      data: { content: content.trim() },
+      data: { content: content.trim(), editedAt },
     });
 
-    res.json({ success: true });
+    res.json({ success: true, editedAt: editedAt.toISOString() });
   } catch (err) {
     next(err);
   }
@@ -330,7 +335,8 @@ export const deleteEntry = async (req: Request, res: Response, next: NextFunctio
       return;
     }
 
-    const tombstone = `🗑️ ${entry.author.name} removed this diary entry.`;
+    const tombstone = `${entry.author.name} removed this diary entry.`;
+    const deletedAt = new Date();
 
     await prisma.diaryEntry.update({
       where: { id },
@@ -338,13 +344,14 @@ export const deleteEntry = async (req: Request, res: Response, next: NextFunctio
         content: tombstone,
         mediaUrl: null,
         type: 'text',
+        deletedAt,
       },
     });
 
     // Clean up reactions/comments on the deleted entry
     await prisma.diaryReaction.deleteMany({ where: { entryId: id } });
 
-    res.json({ success: true });
+    res.json({ success: true, deletedAt: deletedAt.toISOString() });
   } catch (err) {
     next(err);
   }
