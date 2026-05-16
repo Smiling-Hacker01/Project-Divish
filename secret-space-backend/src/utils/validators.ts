@@ -61,11 +61,32 @@ export const refreshSchema = z.object({
 
 // ── Diary Schemas ──────────────────────────────────────────────────────────────
 
-export const createDiarySchema = z.object({
-  type: z.enum(['text', 'image', 'video']),
-  content: z.string().optional(),
-  mediaUrl: z.string().optional(),
-});
+// Discriminated by `type` so the validator can require fields per shape. Text entries
+// must include non-empty content; media entries must include a mediaUrl that we trust
+// to be a Cloudinary URL produced by our own /diary/upload endpoint.
+export const createDiarySchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('text'),
+    content: z.string().trim().min(1, 'Content is required').max(10000, 'Entry is too long'),
+    mediaUrl: z.string().optional(),
+    thumbnailUrl: z.string().optional(),
+    milestone: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal('image'),
+    content: z.string().trim().max(10000).optional(),
+    mediaUrl: z.string().url(),
+    thumbnailUrl: z.string().url().optional(),
+    milestone: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal('video'),
+    content: z.string().trim().max(10000).optional(),
+    mediaUrl: z.string().url(),
+    thumbnailUrl: z.string().url().optional(),
+    milestone: z.boolean().optional(),
+  }),
+]);
 
 export const likeEntrySchema = z.object({
   liked: z.boolean(),

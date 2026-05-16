@@ -75,20 +75,23 @@ model FaceDescriptor {
 }
 
 model DiaryEntry {
-  id        String   @id @default(uuid())
-  couple    Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
-  coupleId  String   @map("couple_id")
-  author    User     @relation(fields: [authorId], references: [id])
-  authorId  String   @map("author_id")
-  type      String   // text | image | video
-  content   String?
-  mediaUrl  String?  @map("media_url")
-  createdAt DateTime @default(now()) @map("created_at")
-  editedAt  DateTime? @map("edited_at")
-  deletedAt DateTime? @map("deleted_at")
+  id           String   @id @default(uuid())
+  couple       Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+  coupleId     String   @map("couple_id")
+  author       User     @relation(fields: [authorId], references: [id])
+  authorId     String   @map("author_id")
+  type         String   // text | image | video
+  content      String?  // plaintext body for text entries (nullable for media-only)
+  mediaUrl     String?  @map("media_url")
+  thumbnailUrl String?  @map("thumbnail_url")
+  milestone    Boolean  @default(false)
+  createdAt    DateTime @default(now()) @map("created_at")
+  editedAt     DateTime? @map("edited_at")
+  deletedAt    DateTime? @map("deleted_at")
 
   reactions DiaryReaction[]
 
+  @@index([coupleId, createdAt])
   @@map("diary_entries")
 }
 

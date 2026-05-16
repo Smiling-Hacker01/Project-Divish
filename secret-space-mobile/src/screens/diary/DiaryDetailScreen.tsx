@@ -1,13 +1,26 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import {
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { Image as ExpoImage } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Video, ResizeMode } from 'expo-av';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ScreenContainer, TopBar, Text, Avatar, Card } from '@/components';
 import { useTheme } from '@/theme';
 import { diaryApi } from '@/api';
 import { DiaryEntry } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
+import { useChatSocket } from '@/context/ChatSocketContext';
+import { fullUrl, videoPosterUrl } from '@/utils/cloudinary';
 import { RootStackParamList } from '@/navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'DiaryDetail'>;
@@ -15,16 +28,17 @@ type Props = NativeStackScreenProps<RootStackParamList, 'DiaryDetail'>;
 export function DiaryDetailScreen({ route, navigation }: Props) {
   const theme = useTheme();
   const { user } = useAuth();
+  const { subscribeDiary } = useChatSocket();
   const [entry, setEntry] = useState<DiaryEntry | null>(null);
   const [reply, setReply] = useState('');
-  const [liked, setLiked] = useState(false);
 
   const refetch = useCallback(async () => {
     try {
       const e = await diaryApi.get(route.params.id);
       setEntry(e);
     } catch {
-      // ignore
+      // ignore — backend 404 means the entry was deleted by the partner; just stay
+      // mounted with the last known state and let the user navigate away.
     }
   }, [route.params.id]);
 
@@ -32,20 +46,43 @@ export function DiaryDetailScreen({ route, navigation }: Props) {
     refetch();
   }, [refetch]);
 
+  // Realtime: if the partner reacts/comments or deletes this entry while we're on the
+  // detail screen, refresh in place. We filter to events for *this* entry only so
+  // unrelated diary changes don't trigger a refetch.
+  useEffect(() => {
+    const unsubscribe = subscribeDiary((evt) => {
+      if (evt.entryId === route.params.id) refetch();
+    });
+    return unsubscribe;
+  }, [subscribeDiary, route.params.id, refetch]);
+
   const toggleLike = async () => {
     if (!entry) return;
-    const next = !liked;
-    // Optimistic: flip my "I liked it" flag and adjust the count immediately so
-    // the UI doesn't have to wait for the server round-trip.
-    setLiked(next);
-    setEntry((e) => (e ? { ...e, likes: Math.max(0, (e.likes ?? 0) + (next ? 1 : -1)) } : e));
+    const wasLiked = !!entry.userLiked;
+    const next = !wasLiked;
+    // Optimistic flip; revert on failure. `userLiked` is now authoritative from the
+    // server, so we don't keep a parallel `liked` state any more.
+    setEntry((e) =>
+      e
+        ? {
+            ...e,
+            userLiked: next,
+            likes: Math.max(0, (e.likes ?? 0) + (next ? 1 : -1)),
+          }
+        : e
+    );
     try {
       await diaryApi.like(entry.id, next);
-      await refetch();
     } catch {
-      // revert
-      setLiked(!next);
-      setEntry((e) => (e ? { ...e, likes: Math.max(0, (e.likes ?? 0) + (next ? -1 : 1)) } : e));
+      setEntry((e) =>
+        e
+          ? {
+              ...e,
+              userLiked: wasLiked,
+              likes: Math.max(0, (e.likes ?? 0) + (next ? -1 : 1)),
+            }
+          : e
+      );
     }
   };
 
@@ -53,7 +90,6 @@ export function DiaryDetailScreen({ route, navigation }: Props) {
     if (!entry || !reply.trim()) return;
     const text = reply.trim();
     setReply('');
-    // Optimistic count bump so the UI feels responsive.
     setEntry((e) => (e ? { ...e, comments: (e.comments ?? 0) + 1 } : e));
     try {
       await diaryApi.comment(entry.id, text);
@@ -94,30 +130,46 @@ export function DiaryDetailScreen({ route, navigation }: Props) {
     );
   }
 
-  const hasImage = entry.type === 'image' && !!entry.content && !entry.deletedAt;
   const partnerName = user?.partnerName ?? 'Partner';
-  const authorName = entry.author === 'you' ? 'You' : partnerName;
+  const authorName = entry.author === 'you' ? 'You' : entry.authorName ?? partnerName;
+  const authorAvatar = entry.author === 'you' ? null : entry.authorAvatar ?? null;
   const isOwner = entry.author === 'you';
   const isDeleted = !!entry.deletedAt;
+
+  // Prefer the discrete fields the new serializer returns; fall back to the legacy
+  // collapsed `content` for older cached data.
+  const textBody = entry.text ?? (entry.type === 'text' ? entry.content : null);
+  const rawMedia = entry.mediaUrl ?? (entry.type !== 'text' ? entry.content : null);
+  const hasImage = entry.type === 'image' && !!rawMedia && !isDeleted;
+  const hasVideo = entry.type === 'video' && !!rawMedia && !isDeleted;
+  const heroImageUri = hasImage ? fullUrl(rawMedia) : null;
+  const videoPoster = hasVideo ? entry.thumbnailUrl ?? videoPosterUrl(rawMedia) : null;
 
   return (
     <ScreenContainer scroll={false}>
       <TopBar
         title=""
-        rightActions={
-          isOwner && !isDeleted
-            ? [{ icon: 'trash-2', onPress: confirmDelete }]
-            : []
-        }
+        rightActions={isOwner && !isDeleted ? [{ icon: 'trash-2', onPress: confirmDelete }] : []}
       />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={{ paddingBottom: 96 }}>
           {hasImage && (
             <View>
-              <Image source={{ uri: entry.content }} style={styles.hero} />
+              <ExpoImage
+                source={{ uri: heroImageUri ?? rawMedia ?? '' }}
+                style={styles.hero}
+                contentFit="cover"
+                transition={200}
+                cachePolicy="memory-disk"
+              />
               <LinearGradient colors={['transparent', 'rgba(0,0,0,0.6)']} style={styles.scrim} />
               <View style={[styles.heroMeta, { paddingHorizontal: theme.screenPadding }]}>
-                <Avatar name={authorName} size={32} ring={entry.author === 'you' ? 'rose' : 'gold'} />
+                <Avatar
+                  uri={authorAvatar}
+                  name={authorName}
+                  size={32}
+                  ring={entry.author === 'you' ? 'rose' : 'gold'}
+                />
                 <Text variant="bodySmall" weight="medium" style={{ color: '#fff', marginLeft: 10 }}>
                   {authorName}
                 </Text>
@@ -128,7 +180,38 @@ export function DiaryDetailScreen({ route, navigation }: Props) {
             </View>
           )}
 
-          <View style={{ padding: theme.screenPadding, paddingTop: hasImage ? 24 : 0 }}>
+          {hasVideo && rawMedia && (
+            <View>
+              <Video
+                source={{ uri: rawMedia }}
+                style={styles.hero}
+                useNativeControls
+                resizeMode={ResizeMode.COVER}
+                shouldPlay={false}
+                // Poster shows instantly while the player initializes — eliminates the
+                // black-rectangle flash that the old implementation had on tap.
+                usePoster
+                posterSource={videoPoster ? { uri: videoPoster } : undefined}
+                posterStyle={styles.hero as any}
+              />
+              <View style={[styles.heroMeta, { paddingHorizontal: theme.screenPadding }]}>
+                <Avatar
+                  uri={authorAvatar}
+                  name={authorName}
+                  size={32}
+                  ring={entry.author === 'you' ? 'rose' : 'gold'}
+                />
+                <Text variant="bodySmall" weight="medium" style={{ color: '#fff', marginLeft: 10 }}>
+                  {authorName}
+                </Text>
+                <Text variant="caption" style={{ color: 'rgba(255,255,255,0.7)', marginLeft: 6 }}>
+                  · {new Date(entry.timestamp).toLocaleString()}
+                </Text>
+              </View>
+            </View>
+          )}
+
+          <View style={{ padding: theme.screenPadding, paddingTop: hasImage || hasVideo ? 24 : 0 }}>
             {isDeleted ? (
               <View
                 style={[
@@ -138,17 +221,17 @@ export function DiaryDetailScreen({ route, navigation }: Props) {
               >
                 <Feather name="slash" size={16} color={theme.colors.muted} />
                 <Text variant="bodySmall" color="muted" style={{ marginLeft: 8, fontStyle: 'italic' }}>
-                  {entry.content || 'Entry was removed.'}
+                  {textBody || 'Entry was removed.'}
                 </Text>
                 <Text variant="caption" color="muted" style={{ marginTop: 6, marginLeft: 24 }}>
                   Removed {new Date(entry.deletedAt!).toLocaleString()}
                 </Text>
               </View>
             ) : (
-              entry.type === 'text' && (
+              !!textBody && (
                 <>
                   <Text variant="serifBody" style={{ fontSize: 19, lineHeight: 30 }}>
-                    {entry.content}
+                    {textBody}
                   </Text>
                   {entry.editedAt && (
                     <Text variant="caption" color="muted" style={{ marginTop: 8, fontStyle: 'italic' }}>
@@ -165,7 +248,7 @@ export function DiaryDetailScreen({ route, navigation }: Props) {
                   <Feather
                     name="heart"
                     size={28}
-                    color={liked || entry.likes > 0 ? theme.colors.primary : theme.colors.muted}
+                    color={entry.userLiked ? theme.colors.primary : theme.colors.muted}
                   />
                   <Text variant="bodyMedium" style={{ marginLeft: 8 }}>
                     {entry.likes}
@@ -204,7 +287,7 @@ export function DiaryDetailScreen({ route, navigation }: Props) {
               { backgroundColor: theme.colors.glassStrong, borderTopColor: theme.colors.hairline },
             ]}
           >
-            <Avatar name={user?.name ?? 'You'} size={32} ring="rose" />
+            <Avatar uri={user?.avatarUrl ?? null} name={user?.name ?? 'You'} size={32} ring="rose" />
             <TextInput
               value={reply}
               onChangeText={setReply}
@@ -214,6 +297,7 @@ export function DiaryDetailScreen({ route, navigation }: Props) {
                 styles.input,
                 { color: theme.colors.foreground, fontFamily: theme.typography.body.fontFamily },
               ]}
+              maxLength={1000}
             />
             <Pressable onPress={sendReply} disabled={!reply.trim()}>
               <LinearGradient
@@ -238,7 +322,7 @@ function timeAgo(iso: string): string {
 }
 
 const styles = StyleSheet.create({
-  hero: { width: '100%', aspectRatio: 1, maxHeight: 380 },
+  hero: { width: '100%', aspectRatio: 1, maxHeight: 380, backgroundColor: '#000' },
   scrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 96 },
   heroMeta: { position: 'absolute', bottom: 16, left: 0, right: 0, flexDirection: 'row', alignItems: 'center' },
   actions: { flexDirection: 'row', alignItems: 'center', marginTop: 24 },
