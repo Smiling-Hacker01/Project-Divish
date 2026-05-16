@@ -11,14 +11,15 @@ export const upsertMood = async (req: Request, res: Response, next: NextFunction
       res.status(400).json({ error: parsed.error.issues[0].message });
       return;
     }
-    const { mood } = parsed.data;
+    const { mood, note } = parsed.data;
+    const trimmedNote = note?.trim() || undefined;
     const userId = req.user!.userId;
     const coupleId = req.coupleId!;
 
     await prisma.mood.upsert({
       where: { coupleId_userId: { coupleId, userId } },
-      create: { coupleId, userId, mood },
-      update: { mood },
+      create: { coupleId, userId, mood, note: trimmedNote },
+      update: { mood, note: trimmedNote ?? null },
     });
 
     const partnerId = req.partnerId;
@@ -53,16 +54,19 @@ export const upsertMood = async (req: Request, res: Response, next: NextFunction
           message = 'Your partner is feeling a bit grumpy 😤 Maybe send them a sweet surprise.';
           break;
       }
-      
+
+      // If they left a note, prefer it as the body so the partner sees their actual words.
+      const body = trimmedNote ? `${mood} ${trimmedNote}` : message;
+
       await sendPush(
         partnerId,
         'Mood Update',
-        message,
-        { url: '/home' }
+        body,
+        { url: '/home', mood, note: trimmedNote ?? '' }
       ).catch(e => console.error('[Push Error]', e));
     }
 
-    res.json({ success: true, mood });
+    res.json({ success: true, mood, note: trimmedNote ?? null });
   } catch (err) {
     next(err);
   }

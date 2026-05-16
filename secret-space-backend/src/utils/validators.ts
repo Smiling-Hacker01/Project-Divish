@@ -83,6 +83,7 @@ export const reactToCommentSchema = z.object({
 
 export const upsertMoodSchema = z.object({
   mood: z.string().min(1, 'Mood is required'),
+  note: z.string().trim().max(280).optional(),
 });
 
 // ── Coupon Schemas ─────────────────────────────────────────────────────────────
