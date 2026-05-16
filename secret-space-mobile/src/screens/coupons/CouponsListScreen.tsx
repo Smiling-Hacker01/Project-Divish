@@ -111,6 +111,7 @@ export function CouponsListScreen() {
 
 export function CouponCard({ coupon, onPress }: { coupon: Coupon; onPress: () => void }) {
   const theme = useTheme();
+  const { user } = useAuth();
   const statusToTone: Record<CouponStatus, 'sage' | 'gold' | 'muted' | 'rose'> = {
     Active: 'sage',
     Pending: 'gold',
@@ -158,9 +159,18 @@ export function CouponCard({ coupon, onPress }: { coupon: Coupon; onPress: () =>
         </View>
 
         <View style={[styles.couponFooter, { paddingHorizontal: 20 }]}>
-          <Avatar name={coupon.creator === 'you' ? 'You' : 'P'} size={24} ring={coupon.creator === 'you' ? 'rose' : 'gold'} />
+          <Avatar
+            uri={
+              coupon.creator === 'you'
+                ? user?.avatarUrl ?? null
+                : user?.partnerAvatar ?? null
+            }
+            name={coupon.creator === 'you' ? user?.name ?? 'You' : user?.partnerName ?? 'Partner'}
+            size={24}
+            ring={coupon.creator === 'you' ? 'rose' : 'gold'}
+          />
           <Text variant="caption" color="muted" style={{ marginLeft: 8 }}>
-            From {coupon.creator === 'you' ? 'you' : 'partner'}
+            From {coupon.creator === 'you' ? 'you' : user?.partnerName ?? 'partner'}
           </Text>
           <View style={{ flex: 1 }} />
           {coupon.expiry && (

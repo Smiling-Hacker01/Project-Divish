@@ -143,7 +143,18 @@ export function DiaryFeedScreen() {
 
       {pendingCount > 0 && (
         <Pressable
-          onPress={() => navigation.navigate('DiaryCreate')}
+          onPress={async () => {
+            // Resume the OLDEST pending entry so the user sees their actual failed
+            // post, not a fresh composer. If there are multiple, the others stay in
+            // the queue and the banner count drops by one after this resolves.
+            const queue = await diaryQueue.list();
+            const oldest = queue.sort((a, b) => a.queuedAt - b.queuedAt)[0];
+            if (oldest) {
+              navigation.navigate('DiaryCreate', { resumeId: oldest.localId });
+            } else {
+              navigation.navigate('DiaryCreate');
+            }
+          }}
           style={[
             styles.pendingBanner,
             { backgroundColor: theme.colors.surface, borderColor: 'rgba(232,99,122,0.4)' },
@@ -184,6 +195,8 @@ export function DiaryFeedScreen() {
             <DiaryCard
               entry={item}
               partnerName={user?.partnerName ?? 'Partner'}
+              ownAvatar={user?.avatarUrl ?? null}
+              ownName={user?.name ?? 'You'}
               onPress={() => navigation.navigate('DiaryDetail', { id: item.id })}
             />
           )}
@@ -218,15 +231,22 @@ function DiaryCard({
   entry,
   onPress,
   partnerName,
+  ownAvatar,
+  ownName,
 }: {
   entry: DiaryEntry;
   onPress: () => void;
   partnerName: string;
+  ownAvatar: string | null;
+  ownName: string;
 }) {
   const theme = useTheme();
   const isYou = entry.author === 'you';
-  const displayName = isYou ? 'You' : entry.authorName ?? partnerName;
-  const avatarUri = isYou ? null : entry.authorAvatar ?? null;
+  const displayName = isYou ? ownName : entry.authorName ?? partnerName;
+  // Own entries use the live user.avatarUrl from AuthContext (kept fresh via socket
+  // profile_updated). Partner entries use the snapshot the backend embedded in the
+  // feed payload — also a Cloudinary URL, so expo-image caches both transparently.
+  const avatarUri = isYou ? ownAvatar : entry.authorAvatar ?? null;
   const isDeleted = !!entry.deletedAt;
 
   // The backend serializer now returns discrete `text` + `mediaUrl` fields. We fall

@@ -183,7 +183,9 @@ export const getEntry = async (req: Request, res: Response, next: NextFunction):
       include: {
         author: { select: { id: true, name: true, avatarUrl: true } },
         reactions: {
-          include: { user: { select: { id: true, name: true } } },
+          // Comment author avatar comes through this `user` relation so the detail
+          // screen can render real profile pictures next to each comment.
+          include: { user: { select: { id: true, name: true, avatarUrl: true } } },
           orderBy: { createdAt: 'asc' },
         },
       },
@@ -215,6 +217,8 @@ export const getEntry = async (req: Request, res: Response, next: NextFunction):
         return {
           id: r.id,
           author: r.userId === userId ? 'You' : r.user.name,
+          authorAvatar: r.user.avatarUrl ?? null,
+          authorId: r.userId,
           text: r.commentText || '',
           timestamp: r.createdAt.toISOString(),
           reactions: Array.from(reactionMap.entries()).map(([emoji, data]) => ({ emoji, ...data })),
@@ -258,31 +262,52 @@ export const createEntry = async (req: Request, res: Response, next: NextFunctio
     const userId = req.user!.userId;
     const coupleId = req.coupleId!;
     const data = parsed.data;
+    const clientId = typeof (req.body as any)?.clientId === 'string' ? (req.body as any).clientId : null;
 
+    // Idempotency fast-path: a retry from the mobile queue passes the same clientId
+    // as the original. If a row already exists for this (authorId, clientId), echo
+    // it back — the same response shape — without creating a duplicate or
+    // re-broadcasting the realtime event.
+    let isReplay = false;
     let entry;
-    try {
-      entry = await prisma.diaryEntry.create({
-        data: {
-          coupleId,
-          authorId: userId,
-          type: data.type,
-          content: data.type === 'text' ? data.content : data.content ?? null,
-          mediaUrl: data.type === 'text' ? null : data.mediaUrl,
-          thumbnailUrl: data.type === 'text' ? null : data.thumbnailUrl ?? null,
-          milestone: data.milestone ?? false,
-        },
+    if (clientId) {
+      const existing = await prisma.diaryEntry.findUnique({
+        where: { diary_author_client_id_unique: { authorId: userId, clientId } },
       });
-    } catch (err) {
-      // The Cloudinary asset is orphaned if we got here. Best-effort delete; never
-      // mask the original error from the response.
-      if (data.type !== 'text') {
-        const publicId = publicIdFromCloudinaryUrl(data.mediaUrl);
-        if (publicId) deleteFile(publicId).catch(() => undefined);
+      if (existing) {
+        entry = existing;
+        isReplay = true;
       }
-      throw err;
     }
 
-    broadcastDiaryChange(coupleId, { action: 'created', entryId: entry.id });
+    if (!entry) {
+      try {
+        entry = await prisma.diaryEntry.create({
+          data: {
+            coupleId,
+            authorId: userId,
+            clientId,
+            type: data.type,
+            content: data.type === 'text' ? data.content : data.content ?? null,
+            mediaUrl: data.type === 'text' ? null : data.mediaUrl,
+            thumbnailUrl: data.type === 'text' ? null : data.thumbnailUrl ?? null,
+            milestone: data.milestone ?? false,
+          },
+        });
+      } catch (err) {
+        // The Cloudinary asset is orphaned if we got here. Best-effort delete; never
+        // mask the original error from the response.
+        if (data.type !== 'text') {
+          const publicId = publicIdFromCloudinaryUrl(data.mediaUrl);
+          if (publicId) deleteFile(publicId).catch(() => undefined);
+        }
+        throw err;
+      }
+    }
+
+    if (!isReplay) {
+      broadcastDiaryChange(coupleId, { action: 'created', entryId: entry.id });
+    }
 
     res.status(201).json({
       id: entry.id,

@@ -12,13 +12,15 @@ import { Feather } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { ScreenContainer, TopBar, Text, Button, SegmentedControl } from '@/components';
 import { useTheme } from '@/theme';
 import { diaryApi, tokens } from '@/api';
 import { DiaryType } from '@/types/api';
 import { diaryQueue } from '@/services/diaryQueue';
 import { diaryDraft, DiaryDraft } from '@/services/diaryDraft';
+import { useChatSocket } from '@/context/ChatSocketContext';
+import { RootStackParamList } from '@/navigation/types';
 
 const DRAFT_AUTOSAVE_MS = 2500;
 const VIDEO_MAX_SECONDS = 60;
@@ -26,6 +28,10 @@ const VIDEO_MAX_SECONDS = 60;
 export function DiaryCreateScreen() {
   const theme = useTheme();
   const navigation = useNavigation();
+  const route = useRoute<RouteProp<RootStackParamList, 'DiaryCreate'>>();
+  const resumeId = route.params?.resumeId ?? null;
+  const { status: socketStatus } = useChatSocket();
+
   const [mode, setMode] = useState<DiaryType>('text');
   const [content, setContent] = useState('');
   // Local file-URI + MIME for the picked media; null for text-only entries.
@@ -35,23 +41,77 @@ export function DiaryCreateScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [draftRestored, setDraftRestored] = useState(false);
+  // When non-null, the composer is resuming a previously-failed queue entry. We reuse
+  // this localId on submit so the backend's (authorId, clientId) idempotency turns a
+  // duplicate insert into a no-op.
+  const [resumeFromQueue, setResumeFromQueue] = useState<{
+    localId: string;
+    uploadedMediaUrl: string | null;
+    uploadedThumbnailUrl: string | null;
+    lastError: string | null;
+  } | null>(null);
 
   const draftSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const submittedRef = useRef(false);
 
-  // ── Draft restore on mount ───────────────────────────────────────────────────
+  // ── Hydration on mount ───────────────────────────────────────────────────────
+  // Priority: explicit resumeId (failed queue entry) → autosaved draft → blank.
+  // Never overlap the two — if we're resuming a queue entry, the draft is irrelevant
+  // for this session (it might belong to a *different* aborted compose) so we leave
+  // it untouched on disk for next time but don't load it.
   useEffect(() => {
-    diaryDraft.load().then((d) => {
-      if (!d) return;
-      // Don't auto-overwrite a fresh composer — only restore when there's actual content.
-      if (d.content.trim().length > 0) {
-        setMode(d.type);
-        setContent(d.content);
-        setMilestone(d.milestone);
-        setDraftRestored(true);
+    let cancelled = false;
+    (async () => {
+      if (resumeId) {
+        const entry = await diaryQueue.get(resumeId);
+        if (entry && !cancelled) {
+          setMode(entry.type);
+          setContent(entry.content ?? '');
+          setMilestone(entry.milestone);
+          // Re-attach the local mediaUri if it still resolves on disk. If not, the
+          // composer renders the resume banner with a hint to re-pick.
+          if (entry.mediaUri) {
+            try {
+              const info = await FileSystem.getInfoAsync(entry.mediaUri);
+              if (info.exists && !cancelled) {
+                setMediaUri(entry.mediaUri);
+                setMediaMime(entry.mediaMime);
+              }
+            } catch {
+              // file no longer there — leave mediaUri null
+            }
+          }
+          setResumeFromQueue({
+            localId: entry.localId,
+            uploadedMediaUrl: entry.mediaUrl,
+            uploadedThumbnailUrl: entry.thumbnailUrl,
+            lastError: entry.lastError,
+          });
+        } else if (!entry && !cancelled) {
+          // Queue entry was cleaned up between banner-tap and screen-mount. Fall
+          // through to draft restore so we don't show a misleading "resuming" UI.
+          loadDraft();
+        }
+        return;
       }
-    });
-  }, []);
+      loadDraft();
+
+      function loadDraft() {
+        diaryDraft.load().then((d) => {
+          if (cancelled || !d) return;
+          if (d.content.trim().length > 0) {
+            setMode(d.type);
+            setContent(d.content);
+            setMilestone(d.milestone);
+            setDraftRestored(true);
+          }
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [resumeId]);
 
   // ── Draft autosave (debounced) ───────────────────────────────────────────────
   useEffect(() => {
@@ -143,11 +203,15 @@ export function DiaryCreateScreen() {
   };
 
   // ── Submit: enqueue → upload (if media) → create → done ─────────────────────
+  // When resuming, we reuse the existing queue entry + its localId so the backend's
+  // (authorId, clientId) idempotency turns a duplicate insert from a "thought it
+  // failed but actually landed" scenario into a single row.
   const submit = useCallback(async () => {
     if (!valid || submitting) return;
     setSubmitting(true);
 
-    const localId = `dlocal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const localId =
+      resumeFromQueue?.localId ?? `dlocal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const payload = {
       type: mode,
       content: content.trim(),
@@ -156,29 +220,43 @@ export function DiaryCreateScreen() {
       milestone,
     };
 
-    // Persist the in-flight job so a kill mid-upload survives. The retry-replay loop
-    // in DiaryFeedScreen will pick it back up.
-    await diaryQueue.enqueue({
-      localId,
-      type: payload.type,
-      content: payload.content,
-      mediaUri: payload.mediaUri,
-      mediaMime: payload.mediaMime,
-      mediaUrl: null,
-      thumbnailUrl: null,
-      milestone: payload.milestone,
-      retries: 0,
-      lastError: null,
-      queuedAt: Date.now(),
-    });
+    if (resumeFromQueue) {
+      // Reset the failure counter and refresh the payload from the (possibly edited)
+      // composer state. The original queue entry keeps the same localId so the server
+      // dedupes if the prior attempt actually persisted.
+      await diaryQueue.update(localId, {
+        type: payload.type,
+        content: payload.content,
+        mediaUri: payload.mediaUri,
+        mediaMime: payload.mediaMime,
+        milestone: payload.milestone,
+        retries: 0,
+        lastError: null,
+      });
+    } else {
+      await diaryQueue.enqueue({
+        localId,
+        type: payload.type,
+        content: payload.content,
+        mediaUri: payload.mediaUri,
+        mediaMime: payload.mediaMime,
+        mediaUrl: null,
+        thumbnailUrl: null,
+        milestone: payload.milestone,
+        retries: 0,
+        lastError: null,
+        queuedAt: Date.now(),
+      });
+    }
 
     try {
-      let mediaUrl: string | undefined;
-      let thumbnailUrl: string | undefined;
+      // Step 1 — upload media if present and not already uploaded. A resumed entry
+      // may already have a Cloudinary URL from a prior attempt that succeeded at
+      // upload but failed at the DB-create step; reuse it to save bandwidth.
+      let mediaUrl: string | undefined = resumeFromQueue?.uploadedMediaUrl ?? undefined;
+      let thumbnailUrl: string | undefined = resumeFromQueue?.uploadedThumbnailUrl ?? undefined;
 
-      // Step 1 — upload media if present. Bytes go straight to /diary/upload as a
-      // multipart POST; the JS bridge never sees base64.
-      if (payload.type !== 'text' && payload.mediaUri) {
+      if (payload.type !== 'text' && !mediaUrl && payload.mediaUri) {
         const accessToken = await tokens.getAccess();
         if (!accessToken) throw new Error('Session expired. Please sign in again.');
         setUploadProgress(0);
@@ -216,26 +294,28 @@ export function DiaryCreateScreen() {
         thumbnailUrl = parsed.thumbnailUrl;
         setUploadProgress(0.98);
 
-        // Save the resolved URL in the queue so a *DB-write only* retry doesn't
-        // re-upload the same file.
         await diaryQueue.update(localId, {
           mediaUrl,
           thumbnailUrl: thumbnailUrl ?? null,
         });
+      } else if (payload.type !== 'text' && !mediaUrl && !payload.mediaUri) {
+        // Resuming a media entry whose local file vanished AND we never finished
+        // uploading. Force the user to re-pick.
+        throw new Error('The original file is no longer available. Please re-attach it.');
       }
 
-      // Step 2 — create the diary entry. Server validates payload shape per type.
+      // Step 2 — create the diary entry. Pass localId as clientId so the server
+      // dedupes retried inserts on (authorId, clientId).
       await diaryApi.create({
         type: payload.type,
         content: payload.content || undefined,
         mediaUrl,
         thumbnailUrl,
         milestone: payload.milestone,
+        clientId: localId,
       });
 
-      // Step 3 — clean up local state. Draft + queue go in this order so a crash
-      // between them just leaves a no-op queue entry that the feed's retry loop will
-      // realise has already been created (404 path) and remove.
+      // Step 3 — clean up local state.
       await diaryQueue.remove(localId);
       submittedRef.current = true;
       await diaryDraft.clear();
@@ -251,7 +331,28 @@ export function DiaryCreateScreen() {
       setSubmitting(false);
       setUploadProgress(null);
     }
-  }, [content, mediaMime, mediaUri, milestone, mode, navigation, submitting, valid]);
+  }, [content, mediaMime, mediaUri, milestone, mode, navigation, resumeFromQueue, submitting, valid]);
+
+  // ── Auto-retry on socket reconnect ───────────────────────────────────────────
+  // When the socket flips back to `connected` (came online from offline, or app
+  // foregrounded after a long sleep), automatically retry any queue entry that
+  // hasn't permanently failed. We restrict to the resumed entry's localId when on
+  // this screen so we don't fire competing creates in the background.
+  const autoRetryFiredRef = useRef(false);
+  useEffect(() => {
+    if (socketStatus !== 'connected') return;
+    if (!resumeFromQueue) return;
+    if (autoRetryFiredRef.current) return;
+    if (submitting) return;
+    // Only auto-retry if the user hasn't edited the composer — otherwise they're
+    // mid-edit and we don't want to fire from under them.
+    if (content !== '' || mediaUri !== null) {
+      // user has changes; skip auto and let them manually tap Post.
+      return;
+    }
+    autoRetryFiredRef.current = true;
+    void submit();
+  }, [socketStatus, resumeFromQueue, submitting, content, mediaUri, submit]);
 
   return (
     <ScreenContainer>
@@ -278,7 +379,37 @@ export function DiaryCreateScreen() {
           />
         </View>
 
-        {draftRestored && (
+        {resumeFromQueue && (
+          <View
+            style={[
+              styles.draftBanner,
+              {
+                backgroundColor: theme.colors.surface,
+                borderColor: 'rgba(232,99,122,0.4)',
+              },
+            ]}
+          >
+            <Feather name="rotate-ccw" size={14} color={theme.colors.destructive} />
+            <Text variant="caption" style={{ marginLeft: 8, flex: 1 }}>
+              {resumeFromQueue.lastError
+                ? `Resuming failed post · ${resumeFromQueue.lastError}`
+                : 'Resuming a previous post'}
+            </Text>
+            <Pressable
+              onPress={async () => {
+                await diaryQueue.remove(resumeFromQueue.localId);
+                navigation.goBack();
+              }}
+              hitSlop={8}
+            >
+              <Text variant="caption" color="destructive" weight="semibold">
+                Discard
+              </Text>
+            </Pressable>
+          </View>
+        )}
+
+        {!resumeFromQueue && draftRestored && (
           <View
             style={[
               styles.draftBanner,

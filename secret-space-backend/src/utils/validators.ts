@@ -124,12 +124,8 @@ export const couponReviewSchema = z.object({
   text: z.string().max(500).optional(),
 });
 
-// ── Vault Schema ───────────────────────────────────────────────────────────────
-
-export const createVaultItemSchema = z.object({
-  fileType: z.enum(['image', 'video']),
-  fileData: z.string().min(1, 'fileData (base64) is required'),
-});
+// Vault validation is inlined in the controller now — multipart upload + URL-only
+// create endpoint don't need a Zod schema for the body, just a simple type check.
 
 // ── LoveBot Schemas ────────────────────────────────────────────────────────────
 

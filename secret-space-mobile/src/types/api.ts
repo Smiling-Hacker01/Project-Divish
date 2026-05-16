@@ -59,6 +59,8 @@ export interface DiaryCommentReaction {
 export interface DiaryComment {
   id: string;
   author: string;
+  authorAvatar?: string | null;
+  authorId?: string;
   text: string;
   timestamp: string;
   reactions?: DiaryCommentReaction[];
@@ -127,7 +129,13 @@ export interface VaultItem {
   type: 'photo' | 'video';
   url: string;
   thumbnailUrl?: string;
+  ownerId?: string;
   timestamp: string;
+}
+
+export interface VaultPage {
+  items: VaultItem[];
+  nextCursor: string | null;
 }
 
 export interface ChatMessage {

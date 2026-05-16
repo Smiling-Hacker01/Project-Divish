@@ -1,8 +1,21 @@
-import React from 'react';
-import { Image, StyleSheet, View, ViewStyle } from 'react-native';
+import React, { useState } from 'react';
+import { StyleSheet, View, ViewStyle } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Image as ExpoImage } from 'expo-image';
 import { useTheme } from '@/theme';
 import { Text } from './Text';
+
+/**
+ * Single source of truth for user identity rendering across the app. Behavior contract:
+ *
+ *   - `uri` set + image loads → show the image
+ *   - `uri` set + image fails (404, network error) → silently fall back to initials
+ *   - `uri` null/undefined → show initials immediately
+ *   - `name` missing → show "?"
+ *
+ * Uses expo-image so all avatars share a single memory+disk cache. Different Cloudinary
+ * URLs per upload mean cache invalidation is automatic — we never serve a stale image.
+ */
 
 interface Props {
   uri?: string | null;
@@ -14,6 +27,14 @@ interface Props {
 
 export function Avatar({ uri, name, size = 48, ring = 'none', style }: Props) {
   const theme = useTheme();
+  const [imgFailed, setImgFailed] = useState(false);
+
+  // Reset the failed flag whenever the URI itself changes — a fresh URL deserves a
+  // fresh attempt even if the previous one 404'd.
+  React.useEffect(() => {
+    setImgFailed(false);
+  }, [uri]);
+
   const initials = (name ?? '?')
     .split(' ')
     .filter(Boolean)
@@ -26,14 +47,30 @@ export function Avatar({ uri, name, size = 48, ring = 'none', style }: Props) {
   const inner = size - ringWidth * 2 - 2;
   const innerRadius = inner / 2;
 
-  const innerNode = uri ? (
-    <Image source={{ uri }} style={{ width: inner, height: inner, borderRadius: innerRadius }} />
+  // Initials-sized typography. Below 32 we drop one size step so the letters fit.
+  const fontSize = size < 36 ? 11 : size < 56 ? 14 : 18;
+
+  // Show the image only if we have a URI AND it hasn't failed to load.
+  const showImage = !!uri && !imgFailed;
+
+  const innerNode = showImage ? (
+    <ExpoImage
+      source={{ uri: uri! }}
+      style={{ width: inner, height: inner, borderRadius: innerRadius }}
+      contentFit="cover"
+      transition={150}
+      cachePolicy="memory-disk"
+      onError={() => setImgFailed(true)}
+    />
   ) : (
     <LinearGradient
       colors={['rgba(232,99,122,0.4)', 'rgba(201,169,110,0.4)']}
       style={[styles.fallback, { width: inner, height: inner, borderRadius: innerRadius }]}
     >
-      <Text variant="bodyMedium" weight="semibold" style={{ color: theme.colors.foreground }}>
+      <Text
+        weight="semibold"
+        style={{ color: theme.colors.foreground, fontSize, lineHeight: fontSize + 2 }}
+      >
         {initials}
       </Text>
     </LinearGradient>

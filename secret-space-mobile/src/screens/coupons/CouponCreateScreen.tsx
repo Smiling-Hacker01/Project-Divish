@@ -119,7 +119,12 @@ export function CouponCreateScreen() {
                 { backgroundColor: theme.colors.surface, borderColor: theme.colors.hairline },
               ]}
             >
-              <Avatar name={user?.partnerName ?? 'P'} size={28} ring="gold" />
+              <Avatar
+                uri={user?.partnerAvatar ?? null}
+                name={user?.partnerName ?? 'P'}
+                size={28}
+                ring="gold"
+              />
               <Text variant="bodyMedium" style={{ marginLeft: 10 }}>
                 {user?.partnerName ?? 'Your partner'}
               </Text>
