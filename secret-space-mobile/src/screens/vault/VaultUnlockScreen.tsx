@@ -6,6 +6,7 @@ import { useNavigation } from '@react-navigation/native';
 import { ScreenContainer, TopBar, Text, Button, Input } from '@/components';
 import { useTheme } from '@/theme';
 import { vaultApi } from '@/api';
+import { vaultUploadManager } from '@/services/vaultUploadManager';
 
 export function VaultUnlockScreen() {
   const theme = useTheme();
@@ -54,6 +55,8 @@ export function VaultUnlockScreen() {
         return;
       }
       await vaultApi.unlock();
+      // Resume any uploads that were paused when the token expired mid-batch.
+      vaultUploadManager.resumeAfterUnlock();
       navigation.replace('VaultGrid');
     } catch (e: any) {
       const status = e?.response?.status;
@@ -75,6 +78,7 @@ export function VaultUnlockScreen() {
     setUnlocking(true);
     try {
       await vaultApi.unlock(password);
+      vaultUploadManager.resumeAfterUnlock();
       navigation.replace('VaultGrid');
     } catch (e: any) {
       setError(e?.response?.data?.error ?? 'That password did not match.');

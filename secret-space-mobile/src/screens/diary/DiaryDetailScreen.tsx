@@ -131,9 +131,13 @@ export function DiaryDetailScreen({ route, navigation }: Props) {
   }
 
   const partnerName = user?.partnerName ?? 'Partner';
-  const authorName = entry.author === 'you' ? 'You' : entry.authorName ?? partnerName;
-  const authorAvatar = entry.author === 'you' ? null : entry.authorAvatar ?? null;
   const isOwner = entry.author === 'you';
+  const authorName = isOwner ? user?.name ?? 'You' : entry.authorName ?? partnerName;
+  // Own entries pull the live avatar from AuthContext; partner entries use the
+  // snapshot the backend embedded in the entry payload.
+  const authorAvatar = isOwner
+    ? user?.avatarUrl ?? null
+    : entry.authorAvatar ?? null;
   const isDeleted = !!entry.deletedAt;
 
   // Prefer the discrete fields the new serializer returns; fall back to the legacy
@@ -259,22 +263,30 @@ export function DiaryDetailScreen({ route, navigation }: Props) {
 
             {!isDeleted && (
               <View style={{ marginTop: 24, gap: 12 }}>
-                {(entry.commentsList ?? []).map((c) => (
-                  <Card key={c.id} variant="glass" padding={16}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Avatar name={c.author} size={24} />
-                      <Text variant="bodySmall" weight="medium" style={{ marginLeft: 8 }}>
-                        {c.author}
+                {(entry.commentsList ?? []).map((c) => {
+                  // For my own comments, prefer the live avatar from AuthContext so a
+                  // freshly-changed profile picture appears without a refetch round-trip.
+                  const isMineComment = c.authorId === user?.id;
+                  const commentAvatar = isMineComment
+                    ? user?.avatarUrl ?? null
+                    : c.authorAvatar ?? null;
+                  return (
+                    <Card key={c.id} variant="glass" padding={16}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <Avatar uri={commentAvatar} name={c.author} size={24} />
+                        <Text variant="bodySmall" weight="medium" style={{ marginLeft: 8 }}>
+                          {c.author}
+                        </Text>
+                        <Text variant="caption" color="muted" style={{ marginLeft: 8 }}>
+                          {timeAgo(c.timestamp)}
+                        </Text>
+                      </View>
+                      <Text variant="serifBody" style={{ fontSize: 16, marginTop: 8 }}>
+                        {c.text}
                       </Text>
-                      <Text variant="caption" color="muted" style={{ marginLeft: 8 }}>
-                        {timeAgo(c.timestamp)}
-                      </Text>
-                    </View>
-                    <Text variant="serifBody" style={{ fontSize: 16, marginTop: 8 }}>
-                      {c.text}
-                    </Text>
-                  </Card>
-                ))}
+                    </Card>
+                  );
+                })}
               </View>
             )}
           </View>

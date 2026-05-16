@@ -19,7 +19,9 @@ export function SettingsScreen() {
       <View style={{ paddingHorizontal: theme.screenPadding, paddingTop: 8, paddingBottom: 32 }}>
         <Section label="Profile">
           <Row
-            leading={<Avatar uri={null} name={user?.name} size={48} ring="rose" />}
+            leading={
+              <Avatar uri={user?.avatarUrl ?? null} name={user?.name} size={48} ring="rose" />
+            }
             title={user?.name ?? 'You'}
             subtitle={user?.email ?? ''}
             chevron
@@ -29,7 +31,14 @@ export function SettingsScreen() {
         <Section label="Partner">
           {user?.partnerName ? (
             <Row
-              leading={<Avatar name={user.partnerName} size={48} ring="gold" />}
+              leading={
+                <Avatar
+                  uri={user?.partnerAvatar ?? null}
+                  name={user.partnerName}
+                  size={48}
+                  ring="gold"
+                />
+              }
               title={user.partnerName}
               trailing={<Chip label="Linked" tone="sage" size="sm" />}
             />

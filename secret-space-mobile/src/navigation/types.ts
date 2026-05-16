@@ -28,7 +28,9 @@ export type RootStackParamList = {
   Auth: NavigatorScreenParams<AuthStackParamList>;
   Main: NavigatorScreenParams<MainTabParamList>;
   MoodCheckIn: undefined;
-  DiaryCreate: undefined;
+  // resumeId lets the failed-post banner reopen an exact pending entry from the
+  // diaryQueue instead of starting a blank composer.
+  DiaryCreate: { resumeId?: string } | undefined;
   DiaryDetail: { id: string };
   Chat: undefined;
   CouponCreate: undefined;

@@ -13,13 +13,15 @@ export const diaryApi = {
   get: async (id: string) => (await apiClient.get<DiaryEntry>(`/diary/${id}`)).data,
 
   // Discrete fields only — no more base64-in-content. Media must already be uploaded
-  // via /diary/upload, returning a Cloudinary URL passed here as `mediaUrl`.
+  // via /diary/upload, returning a Cloudinary URL passed here as `mediaUrl`. Pass
+  // clientId from the retry queue so the backend can dedupe replayed sends.
   create: async (body: {
     type: DiaryType;
     content?: string;
     mediaUrl?: string;
     thumbnailUrl?: string;
     milestone?: boolean;
+    clientId?: string;
   }) => (await apiClient.post<DiaryEntry>('/diary', body)).data,
 
   update: async (id: string, content: string) =>

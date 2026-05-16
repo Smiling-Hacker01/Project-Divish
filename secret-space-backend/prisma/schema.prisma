@@ -80,6 +80,10 @@ model DiaryEntry {
   coupleId     String   @map("couple_id")
   author       User     @relation(fields: [authorId], references: [id])
   authorId     String   @map("author_id")
+  // Client-supplied idempotency token. Combined with authorId via the unique index
+  // below so retried diary submissions return the existing row instead of creating
+  // duplicates. NULL allowed for legacy entries created before this column existed.
+  clientId     String?  @map("client_id")
   type         String   // text | image | video
   content      String?  // plaintext body for text entries (nullable for media-only)
   mediaUrl     String?  @map("media_url")
@@ -92,6 +96,8 @@ model DiaryEntry {
   reactions DiaryReaction[]
 
   @@index([coupleId, createdAt])
+  // NULLS DISTINCT in Postgres allows legacy NULL clientId rows to coexist.
+  @@unique([authorId, clientId], name: "diary_author_client_id_unique")
   @@map("diary_entries")
 }
 
@@ -172,11 +178,16 @@ model VaultFile {
   id           String   @id @default(uuid())
   owner        User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   ownerId      String   @map("owner_id")
+  // Idempotency token mirroring Message/DiaryEntry — lets the upload retry queue
+  // collapse a re-attempted insert into the same row.
+  clientId     String?  @map("client_id")
   fileUrl      String   @map("file_url")
   fileType     String   @map("file_type") // image | video
   thumbnailUrl String?  @map("thumbnail_url")
   createdAt    DateTime @default(now()) @map("created_at")
 
+  @@index([ownerId, createdAt])
+  @@unique([ownerId, clientId], name: "vault_owner_client_id_unique")
   @@map("vault_files")
 }
 

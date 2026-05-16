@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { apiClient } from './client';
-import { VaultItem } from '@/types/api';
+import { apiBaseUrl, apiClient } from './client';
+import { VaultItem, VaultPage } from '@/types/api';
 
 const VAULT_TOKEN_KEY = 'secretspace.vaultToken';
 
@@ -18,16 +18,24 @@ export const vaultApi = {
     return data;
   },
 
-  list: async () => {
+  // Cursor-paginated. Pass the previous page's `nextCursor` for the next batch.
+  list: async (params?: { cursor?: string; limit?: number }) => {
     const token = await vaultApi.getToken();
     return (
-      await apiClient.get<VaultItem[]>('/vault', {
+      await apiClient.get<VaultPage>('/vault', {
         headers: token ? { 'X-Vault-Token': token } : undefined,
+        params: { cursor: params?.cursor, limit: params?.limit },
       })
     ).data;
   },
 
-  upload: async (body: { fileType: 'image' | 'video'; fileData: string }) => {
+  // Create the vault item *after* the file has been uploaded via uploadUrl().
+  create: async (body: {
+    fileType: 'image' | 'video';
+    fileUrl: string;
+    thumbnailUrl?: string;
+    clientId?: string;
+  }) => {
     const token = await vaultApi.getToken();
     return (
       await apiClient.post<VaultItem>('/vault', body, {
@@ -44,4 +52,8 @@ export const vaultApi = {
       })
     ).data;
   },
+
+  // Endpoint URL for FileSystem.uploadAsync — bytes flow as a multipart POST instead
+  // of base64 across the React Native bridge.
+  uploadUrl: () => `${apiBaseUrl}/vault/upload`,
 };
