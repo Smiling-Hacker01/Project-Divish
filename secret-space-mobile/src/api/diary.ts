@@ -1,15 +1,26 @@
-import { apiClient } from './client';
-import { DiaryEntry, DiaryType } from '@/types/api';
+import { apiBaseUrl, apiClient } from './client';
+import { DiaryEntry, DiaryPage, DiaryType } from '@/types/api';
 
 export const diaryApi = {
-  list: async () => (await apiClient.get<DiaryEntry[]>('/diary')).data,
+  // Cursor-paginated feed. Pass the previous page's nextCursor for the next batch.
+  list: async (params?: { cursor?: string; limit?: number }) =>
+    (
+      await apiClient.get<DiaryPage>('/diary', {
+        params: { cursor: params?.cursor, limit: params?.limit },
+      })
+    ).data,
+
   get: async (id: string) => (await apiClient.get<DiaryEntry>(`/diary/${id}`)).data,
 
-  // Backend accepts: { type, content, mediaUrl? }
-  // For text posts: send `content` as the text body.
-  // For image/video: pass the data URL (or pure base64) in `content` — backend uploads to Cloudinary.
-  create: async (body: { type: DiaryType; content: string; mediaUrl?: string }) =>
-    (await apiClient.post<DiaryEntry>('/diary', body)).data,
+  // Discrete fields only — no more base64-in-content. Media must already be uploaded
+  // via /diary/upload, returning a Cloudinary URL passed here as `mediaUrl`.
+  create: async (body: {
+    type: DiaryType;
+    content?: string;
+    mediaUrl?: string;
+    thumbnailUrl?: string;
+    milestone?: boolean;
+  }) => (await apiClient.post<DiaryEntry>('/diary', body)).data,
 
   update: async (id: string, content: string) =>
     (await apiClient.put<{ success: true }>(`/diary/${id}`, { content })).data,
@@ -25,4 +36,8 @@ export const diaryApi = {
 
   reactComment: async (id: string, commentId: string, emoji: string) =>
     (await apiClient.post<{ success: true }>(`/diary/${id}/comments/${commentId}/react`, { emoji })).data,
+
+  // Endpoint URL for multipart uploads. Used by FileSystem.uploadAsync directly so the
+  // file bytes never have to be base64-encoded across the React Native bridge.
+  uploadUrl: () => `${apiBaseUrl}/diary/upload`,
 };

@@ -67,14 +67,27 @@ export interface DiaryComment {
 export interface DiaryEntry {
   id: string;
   type: DiaryType;
+  // Back-compat field: text body OR media URL. Prefer `text`/`mediaUrl` for new code.
   content: string;
+  text?: string | null;
+  mediaUrl?: string | null;
+  thumbnailUrl?: string | null;
+  milestone?: boolean;
   author: 'you' | 'partner';
+  authorName?: string;
+  authorAvatar?: string | null;
   timestamp: string;
   likes: number;
   comments: number;
+  userLiked?: boolean;
   commentsList?: DiaryComment[];
   editedAt?: string | null;
   deletedAt?: string | null;
+}
+
+export interface DiaryPage {
+  entries: DiaryEntry[];
+  nextCursor: string | null;
 }
 
 export type CouponStatus = 'Active' | 'Pending' | 'Used' | 'Fulfilled' | 'Expired';

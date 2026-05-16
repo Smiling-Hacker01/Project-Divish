@@ -24,12 +24,22 @@ import { useAuth } from '@/context/AuthContext';
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'error';
 
+export type DiaryChangeEvent =
+  | { action: 'created'; entryId: string }
+  | { action: 'updated'; entryId: string }
+  | { action: 'deleted'; entryId: string }
+  | { action: 'reaction'; entryId: string };
+
+type DiaryListener = (e: DiaryChangeEvent) => void;
+
 interface ChatSocketCtx {
   socket: Socket | null;
   status: ConnectionStatus;
   partnerOnline: boolean;
   unreadCount: number;
   resetUnread: () => void;
+  // Subscribe to live diary-feed mutations. Returns an unsubscribe fn for cleanup.
+  subscribeDiary: (fn: DiaryListener) => () => void;
 }
 
 const Context = createContext<ChatSocketCtx | null>(null);
@@ -47,6 +57,17 @@ export function ChatSocketProvider({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     refreshProfileRef.current = refreshProfile;
   }, [refreshProfile]);
+
+  // Diary listeners — registered by screens (Feed/Detail) and fired whenever the server
+  // broadcasts a `diary_changed` event. Kept in a ref so subscribing doesn't tear down
+  // the socket. Multiple subscribers coexist (e.g. Feed + Detail both mounted).
+  const diaryListenersRef = useRef<Set<DiaryListener>>(new Set());
+  const subscribeDiary = useCallback((fn: DiaryListener) => {
+    diaryListenersRef.current.add(fn);
+    return () => {
+      diaryListenersRef.current.delete(fn);
+    };
+  }, []);
 
   // Authoritative authenticated id this socket is bound to. Used to tear down when the
   // user changes (logout + login as different account in same session).
@@ -119,6 +140,18 @@ export function ChatSocketProvider({ children }: { children: React.ReactNode }) 
       refreshProfileRef.current?.().catch(() => undefined);
     });
 
+    // Diary mutations from the partner (or this user on another device). Fan out to
+    // anyone who has subscribed — the listener set is mutated by subscribe/unsubscribe.
+    s.on('diary_changed', (e: DiaryChangeEvent) => {
+      diaryListenersRef.current.forEach((fn) => {
+        try {
+          fn(e);
+        } catch (err) {
+          if (__DEV__) console.log('[ChatSocket] diary listener threw', err);
+        }
+      });
+    });
+
     // Fetch initial count from REST so the badge is correct before the first socket
     // event arrives. Live updates take over afterwards.
     try {
@@ -169,11 +202,12 @@ export function ChatSocketProvider({ children }: { children: React.ReactNode }) 
       partnerOnline,
       unreadCount,
       resetUnread,
+      subscribeDiary,
     }),
     // socketRef.current isn't in deps because it's a ref; consumers needing a fresh
     // socket can read it via the hook and the status state will force re-renders when
     // the connection establishes or drops.
-    [status, partnerOnline, unreadCount, resetUnread]
+    [status, partnerOnline, unreadCount, resetUnread, subscribeDiary]
   );
 
   return <Context.Provider value={value}>{children}</Context.Provider>;
