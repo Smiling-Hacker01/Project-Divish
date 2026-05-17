@@ -4,12 +4,14 @@
   --font-size: 16px;
   
   /* Custom Couples App Colors */
-  --rose: #C0415A;
-  --near-black: #1A1A2E;
-  --warm-white: #FAF7F2;
-  --gold: #E2B96F;
-  --muted-text: #8A8A9A;
-  --surface: #252542;
+  --rose: #E8637A;
+  --near-black: #0D0D0F;
+  --warm-white: #E5E1E4;
+  --gold: #C9A96E;
+  --sage: #7EAFA0;
+  --muted-text: #A58A8C;
+  --surface: #161618;
+  --glass-fill: rgba(255, 255, 255, 0.05);
   
   /* Light Mode (fallback) */
   --background: var(--warm-white);
@@ -63,14 +65,14 @@
   --primary-foreground: var(--warm-white);
   --secondary: var(--surface);
   --secondary-foreground: var(--warm-white);
-  --muted: #2a2a3e;
+  --muted: #201F21;
   --muted-foreground: var(--muted-text);
   --accent: var(--gold);
   --accent-foreground: var(--near-black);
   --destructive: var(--rose);
   --destructive-foreground: var(--warm-white);
-  --border: rgba(250, 247, 242, 0.1);
-  --input: rgba(250, 247, 242, 0.05);
+  --border: rgba(201, 169, 110, 0.15);
+  --input: var(--glass-fill);
   --ring: var(--rose);
   --font-weight-medium: 500;
   --font-weight-normal: 400;
@@ -94,8 +96,10 @@
   --color-near-black: var(--near-black);
   --color-warm-white: var(--warm-white);
   --color-gold: var(--gold);
+  --color-sage: var(--sage);
   --color-muted-text: var(--muted-text);
   --color-surface: var(--surface);
+  --color-glass-fill: var(--glass-fill);
   
   --color-background: var(--background);
   --color-foreground: var(--foreground);

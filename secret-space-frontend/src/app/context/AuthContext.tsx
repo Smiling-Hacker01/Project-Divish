@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User } from '../types/auth';
 import { initPushNotifications } from '../services/pushNotifications';
+import { socketManager } from '../services/socket';
 
 interface AuthContextType {
   user: User | null;
@@ -25,8 +26,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (storedUser && token) {
       try {
         setUser(JSON.parse(storedUser));
-        // User is already logged in from a previous session — register push
+        // User is already logged in from a previous session
         initPushNotifications().catch(() => {});
+        socketManager.connect();
       } catch {
         // failed to parse
       }
@@ -40,6 +42,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     localStorage.setItem('accessToken', token);
     // Register push notifications after successful login
     initPushNotifications().catch(() => {});
+    socketManager.connect();
   };
 
   const logoutState = () => {
@@ -50,6 +53,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     localStorage.removeItem('faceMFAEnabled');
     localStorage.removeItem('otpMFAEnabled');
     localStorage.removeItem('coupleCode');
+    socketManager.disconnect();
   };
 
   const updateUser = (updates: Partial<User>) => {

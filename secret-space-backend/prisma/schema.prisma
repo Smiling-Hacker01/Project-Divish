@@ -13,6 +13,8 @@ model User {
   email        String   @unique
   passwordHash String   @map("password_hash")
   fcmToken     String?  @map("fcm_token")
+  publicKey    String?  @map("public_key")
+  avatarUrl    String?  @map("avatar_url")
   createdAt    DateTime @default(now()) @map("created_at")
 
   // Relations
@@ -27,6 +29,7 @@ model User {
   vaultFiles       VaultFile[]
   authoredReasons  LoveReason[]     @relation("ReasonAuthor")
   receivedReasons  LoveReason[]     @relation("ReasonRecipient")
+  sentMessages     Message[]        @relation("SentMessages")
 
   @@map("users")
 }
@@ -56,6 +59,7 @@ model Couple {
   moods        Mood[]
   coupons      Coupon[]
   loveReasons  LoveReason[]
+  messages     Message[]
 
   @@map("couples")
 }
@@ -71,18 +75,29 @@ model FaceDescriptor {
 }
 
 model DiaryEntry {
-  id        String   @id @default(uuid())
-  couple    Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
-  coupleId  String   @map("couple_id")
-  author    User     @relation(fields: [authorId], references: [id])
-  authorId  String   @map("author_id")
-  type      String   // text | image | video
-  content   String?
-  mediaUrl  String?  @map("media_url")
-  createdAt DateTime @default(now()) @map("created_at")
+  id           String   @id @default(uuid())
+  couple       Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+  coupleId     String   @map("couple_id")
+  author       User     @relation(fields: [authorId], references: [id])
+  authorId     String   @map("author_id")
+  // Client-supplied idempotency token. Combined with authorId via the unique index
+  // below so retried diary submissions return the existing row instead of creating
+  // duplicates. NULL allowed for legacy entries created before this column existed.
+  clientId     String?  @map("client_id")
+  type         String   // text | image | video
+  content      String?  // plaintext body for text entries (nullable for media-only)
+  mediaUrl     String?  @map("media_url")
+  thumbnailUrl String?  @map("thumbnail_url")
+  milestone    Boolean  @default(false)
+  createdAt    DateTime @default(now()) @map("created_at")
+  editedAt     DateTime? @map("edited_at")
+  deletedAt    DateTime? @map("deleted_at")
 
   reactions DiaryReaction[]
 
+  @@index([coupleId, createdAt])
+  // NULLS DISTINCT in Postgres allows legacy NULL clientId rows to coexist.
+  @@unique([authorId, clientId], name: "diary_author_client_id_unique")
   @@map("diary_entries")
 }
 
@@ -113,6 +128,7 @@ model Mood {
   user      User     @relation(fields: [userId], references: [id])
   userId    String   @map("user_id")
   mood      String   // happy | grumpy | low | productive | missing_you
+  note      String?  // optional one-line context the partner sees with the mood
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@unique([coupleId, userId])
@@ -150,6 +166,7 @@ model LoveReason {
   forUser     User      @relation("ReasonRecipient", fields: [forUserId], references: [id])
   forUserId   String    @map("for_user_id")
   reason      String
+  image       String?
   used        Boolean   @default(false)
   deliveredAt DateTime? @map("delivered_at")
   createdAt   DateTime  @default(now()) @map("created_at")
@@ -161,10 +178,49 @@ model VaultFile {
   id           String   @id @default(uuid())
   owner        User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   ownerId      String   @map("owner_id")
+  // Idempotency token mirroring Message/DiaryEntry — lets the upload retry queue
+  // collapse a re-attempted insert into the same row.
+  clientId     String?  @map("client_id")
   fileUrl      String   @map("file_url")
   fileType     String   @map("file_type") // image | video
   thumbnailUrl String?  @map("thumbnail_url")
   createdAt    DateTime @default(now()) @map("created_at")
 
+  @@index([ownerId, createdAt])
+  @@unique([ownerId, clientId], name: "vault_owner_client_id_unique")
   @@map("vault_files")
+}
+
+model Message {
+  id              String   @id @default(uuid())
+  couple          Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+  coupleId        String   @map("couple_id")
+  sender          User     @relation("SentMessages", fields: [senderId], references: [id])
+  senderId        String   @map("sender_id")
+  // Client-supplied idempotency token. Combined with senderId via the unique index below
+  // so a retried `send_message` returns the existing row instead of creating a duplicate.
+  clientId        String?  @map("client_id")
+  content         String?
+  mediaUrl        String?  @map("media_url")
+  mediaType       String?  @map("media_type")
+  senderAesKey      String?  @map("sender_aes_key")
+  recipientAesKey   String?  @map("recipient_aes_key")
+  status            String   @default("sent")
+
+  deletedForSender  Boolean  @default(false) @map("deleted_for_sender")
+  deletedForEveryone Boolean @default(false) @map("deleted_for_everyone")
+  deletedAt         DateTime? @map("deleted_at")
+  editedAt          DateTime? @map("edited_at")
+  reactions         Json?    @default("{}")
+  deliveredAt       DateTime? @map("delivered_at")
+  readAt            DateTime? @map("read_at")
+
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@index([coupleId, createdAt])
+  // Postgres treats NULL values as distinct by default, so multiple rows with
+  // `client_id IS NULL` coexist while non-null duplicates for the same sender are
+  // rejected. This is what gives `send_message` its idempotency.
+  @@unique([senderId, clientId], name: "sender_client_id_unique")
+  @@map("messages")
 }
