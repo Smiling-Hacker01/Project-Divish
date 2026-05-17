@@ -1200,7 +1200,7 @@ export function ChatScreen() {
         >
           <Feather name="lock" size={12} color={theme.colors.muted} />
           <Text variant="caption" color="muted" style={{ marginLeft: 8, flex: 1 }}>
-            Setting up encryption (one-time, ~30s) — feel free to use other tabs.
+            Securing your messages…
           </Text>
         </View>
       )}

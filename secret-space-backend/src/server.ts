@@ -3,7 +3,6 @@ import prisma from './config/prisma';
 import redis from './config/redis';
 import logger from './config/logger';
 import './config/firebase'; // Initialize Firebase Admin SDK for push notifications
-import { loadModels } from './services/face.service';
 import { validateJwtConfig } from './utils/jwt';
 import { startLoveBotCron } from './jobs/lovebot.cron';
 import { initializeChatSockets } from './websockets/chat.gateway';
@@ -23,8 +22,9 @@ const start = async () => {
     await redis.ping();
     logger.info('[Redis] Connection verified');
 
-    // ── Pre-load face-api.js models ──────────────────────────────────
-    await loadModels();
+    // Face-api.js models are lazy-loaded on first /auth/face-* request via
+    // extractDescriptor() — keeps ~150 MB of TF tensors out of resident memory until
+    // we actually need them, which matters on Render's 512 MB tier.
 
     // ── Start LoveBot cron job ───────────────────────────────────────
     startLoveBotCron();
