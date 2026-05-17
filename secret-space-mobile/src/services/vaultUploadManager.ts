@@ -303,7 +303,24 @@ export const vaultUploadManager = {
   discard: async (localId: string): Promise<void> => {
     await vaultQueue.remove(localId);
     delete state.entries[localId];
+    sessionInitiated.delete(localId);
     state.failed = Math.max(0, state.failed - 1);
+    emit();
+  },
+
+  /** Drop every entry that hit MAX_RETRIES — used by the "dismiss failed" UI so the
+   *  banner can be cleared without retrying. We also wipe their entries from the
+   *  in-memory state map so the manager's view reconciles with disk on the next
+   *  drain. Successful and in-flight entries are left untouched. */
+  discardAllFailed: async (): Promise<void> => {
+    const queue = await vaultQueue.list();
+    const failed = queue.filter((e) => e.retries >= vaultQueue.MAX_RETRIES);
+    for (const entry of failed) {
+      await vaultQueue.remove(entry.localId).catch(() => undefined);
+      delete state.entries[entry.localId];
+      sessionInitiated.delete(entry.localId);
+    }
+    state.failed = 0;
     emit();
   },
 
