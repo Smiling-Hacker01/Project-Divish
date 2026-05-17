@@ -1,3 +1,11 @@
+// Force IPv4 DNS resolution for all outbound connections. Render's free tier resolves
+// AAAA records for hosts like smtp.gmail.com but cannot actually route IPv6 egress, so
+// without this every SMTP send (and any IPv6-resolvable third-party API) times out at
+// the network layer. Setting `ipv4first` makes Node try A records before AAAA for the
+// whole process — works for nodemailer, Firebase Admin, Cloudinary, anything.
+import dns from 'dns';
+dns.setDefaultResultOrder('ipv4first');
+
 import app from './app';
 import prisma from './config/prisma';
 import redis from './config/redis';
