@@ -77,7 +77,8 @@
       ],
       "expo-asset",
       "@react-native-community/datetimepicker",
-      "react-native-quick-crypto"
+      "react-native-quick-crypto",
+      "expo-build-properties"
     ],
     "extra": {
       "apiBaseUrl": "https://project-divish.onrender.com/api",
