@@ -1,6 +1,9 @@
 import * as faceapi from 'face-api.js';
 import * as canvas from 'canvas';
-import * as tf from '@tensorflow/tfjs-node';
+// Side-effect import: registers the native TensorFlow backend that face-api.js uses
+// for inference. Without it face-api falls back to a JS backend (or no backend at
+// all) and detection silently fails.
+import '@tensorflow/tfjs-node';
 import path from 'path';
 import { euclideanDistance, isFaceMatch } from '../utils/faceDistance';
 import logger from '../config/logger';
@@ -11,16 +14,32 @@ const { Canvas, Image, ImageData } = canvas;
 faceapi.env.monkeyPatch({ Canvas, Image, ImageData });
 
 let modelsLoaded = false;
+// In-flight promise dedup: if two face requests arrive before the first load completes,
+// the second one awaits the same promise instead of triggering a parallel tensor alloc.
+let modelsLoadPromise: Promise<void> | null = null;
 
 const MODEL_PATH = path.join(process.cwd(), 'models'); // place face-api.js weights here
 
 export const loadModels = async (): Promise<void> => {
   if (modelsLoaded) return;
-  await faceapi.nets.ssdMobilenetv1.loadFromDisk(MODEL_PATH);
-  await faceapi.nets.faceLandmark68Net.loadFromDisk(MODEL_PATH);
-  await faceapi.nets.faceRecognitionNet.loadFromDisk(MODEL_PATH);
-  modelsLoaded = true;
-  logger.info('[FaceService] Models loaded');
+  if (!modelsLoadPromise) {
+    modelsLoadPromise = (async () => {
+      try {
+        await faceapi.nets.ssdMobilenetv1.loadFromDisk(MODEL_PATH);
+        await faceapi.nets.faceLandmark68Net.loadFromDisk(MODEL_PATH);
+        await faceapi.nets.faceRecognitionNet.loadFromDisk(MODEL_PATH);
+        modelsLoaded = true;
+        logger.info('[FaceService] Models loaded');
+      } catch (err) {
+        // Reset so the next caller retries from scratch instead of inheriting our
+        // failure forever — otherwise a single bad load locks face routes until the
+        // dyno restarts.
+        modelsLoadPromise = null;
+        throw err;
+      }
+    })();
+  }
+  return modelsLoadPromise;
 };
 
 /**

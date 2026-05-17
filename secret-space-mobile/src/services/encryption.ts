@@ -68,9 +68,9 @@ export const generateRSAKeyPair = async (): Promise<{ publicKey: string; private
     // gets us to 15-30s while still being decryption-compatible with web's 2048-bit
     // keys (RSA-OAEP doesn't care about the other side's key size).
     //
-    // PRODUCTION TODO: swap node-forge for `react-native-quick-crypto` (native bindings,
-    // ~100ms for 2048-bit keygen). That's a fresh `eas build` because it ships native
-    // code, so we defer it until you're done verifying feature flows.
+    // PATH-B FOLLOWUP: react-native-quick-crypto v0.7.x doesn't work under Expo's new
+    // architecture (Fabric/Bridgeless) and v1.x needs RN 0.77+, so the native-crypto
+    // swap is deferred until one of those changes. Until then we stay on pure-JS forge.
     forge.pki.rsa.generateKeyPair({ bits: 1024 }, (err, keyPair) => {
         if (err || !keyPair) {
           reject(err ?? new Error('Key generation failed'));
