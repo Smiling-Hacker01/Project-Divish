@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { authApi, settingsApi, setLogoutHandler, tokens } from '@/api';
+import { authApi, prewarmBackend, settingsApi, setLogoutHandler, tokens } from '@/api';
 import { User } from '@/types/api';
 import {
   initPushNotifications,
@@ -89,6 +89,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // Kick the backend awake in parallel with session restore. If the dyno is cold,
+    // it gets the ~30s spin-up window while the splash is showing instead of while
+    // the user is waiting on /me or the chat socket.
+    prewarmBackend();
     (async () => {
       try {
         const [storedUser, accessToken, notifPref] = await Promise.all([

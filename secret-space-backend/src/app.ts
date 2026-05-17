@@ -52,46 +52,49 @@ app.use('/api/chat', chatRoutes);
 // ── Push Notification Diagnostic ──────────────────────────────────────────────
 // Auth-gated diagnostic that targets the *caller's* device. Returns Firebase config
 // status and (if the caller has an fcmToken registered) attempts to send a test push.
-// No bulk user listing — strictly self-targeted to avoid leaking tokens.
-app.get('/api/debug/push-test', verifyJWT, async (req, res) => {
-  const admin = await import('./config/firebase');
-  const prisma = (await import('./config/prisma')).default;
+// Only registered outside production — prod diagnoses push via Firebase Console /
+// server logs, not via a publicly reachable HTTP route.
+if (process.env.NODE_ENV !== 'production') {
+  app.get('/api/debug/push-test', verifyJWT, async (req, res) => {
+    const admin = await import('./config/firebase');
+    const prisma = (await import('./config/prisma')).default;
 
-  const diag: any = {
-    firebaseInitialized: admin.default.apps.length > 0,
-    envVars: {
-      hasProjectId: !!process.env.FIREBASE_PROJECT_ID,
-      hasClientEmail: !!process.env.FIREBASE_CLIENT_EMAIL,
-      hasPrivateKey: !!process.env.FIREBASE_PRIVATE_KEY,
-    },
-  };
+    const diag: any = {
+      firebaseInitialized: admin.default.apps.length > 0,
+      envVars: {
+        hasProjectId: !!process.env.FIREBASE_PROJECT_ID,
+        hasClientEmail: !!process.env.FIREBASE_CLIENT_EMAIL,
+        hasPrivateKey: !!process.env.FIREBASE_PRIVATE_KEY,
+      },
+    };
 
-  const me = await prisma.user.findUnique({
-    where: { id: req.user!.userId },
-    select: { id: true, fcmToken: true },
-  });
-  diag.hasFcmToken = !!me?.fcmToken;
+    const me = await prisma.user.findUnique({
+      where: { id: req.user!.userId },
+      select: { id: true, fcmToken: true },
+    });
+    diag.hasFcmToken = !!me?.fcmToken;
 
-  if (!admin.default.apps.length) {
-    diag.testSendResult = { skipped: true, reason: 'Firebase not initialized on the server' };
-  } else if (!me?.fcmToken) {
-    diag.testSendResult = { skipped: true, reason: 'No FCM token registered for this account' };
-  } else {
-    try {
-      const result = await admin.default.messaging().send({
-        token: me.fcmToken,
-        notification: { title: '🧪 Test Push', body: 'Push notifications are working!' },
-        data: { type: 'debug' },
-        android: { priority: 'high' },
-      });
-      diag.testSendResult = { success: true, messageId: result };
-    } catch (err: any) {
-      diag.testSendResult = { success: false, error: err.message, code: err.code };
+    if (!admin.default.apps.length) {
+      diag.testSendResult = { skipped: true, reason: 'Firebase not initialized on the server' };
+    } else if (!me?.fcmToken) {
+      diag.testSendResult = { skipped: true, reason: 'No FCM token registered for this account' };
+    } else {
+      try {
+        const result = await admin.default.messaging().send({
+          token: me.fcmToken,
+          notification: { title: '🧪 Test Push', body: 'Push notifications are working!' },
+          data: { type: 'debug' },
+          android: { priority: 'high' },
+        });
+        diag.testSendResult = { success: true, messageId: result };
+      } catch (err: any) {
+        diag.testSendResult = { success: false, error: err.message, code: err.code };
+      }
     }
-  }
 
-  res.json(diag);
-});
+    res.json(diag);
+  });
+}
 
 // ── Health check ───────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));

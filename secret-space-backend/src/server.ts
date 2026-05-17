@@ -1,9 +1,16 @@
+// Force IPv4 DNS resolution for all outbound connections. Render's free tier resolves
+// AAAA records for hosts like smtp.gmail.com but cannot actually route IPv6 egress, so
+// without this every SMTP send (and any IPv6-resolvable third-party API) times out at
+// the network layer. Setting `ipv4first` makes Node try A records before AAAA for the
+// whole process — works for nodemailer, Firebase Admin, Cloudinary, anything.
+import dns from 'dns';
+dns.setDefaultResultOrder('ipv4first');
+
 import app from './app';
 import prisma from './config/prisma';
 import redis from './config/redis';
 import logger from './config/logger';
 import './config/firebase'; // Initialize Firebase Admin SDK for push notifications
-import { loadModels } from './services/face.service';
 import { validateJwtConfig } from './utils/jwt';
 import { startLoveBotCron } from './jobs/lovebot.cron';
 import { initializeChatSockets } from './websockets/chat.gateway';
@@ -23,8 +30,9 @@ const start = async () => {
     await redis.ping();
     logger.info('[Redis] Connection verified');
 
-    // ── Pre-load face-api.js models ──────────────────────────────────
-    await loadModels();
+    // Face-api.js models are lazy-loaded on first /auth/face-* request via
+    // extractDescriptor() — keeps ~150 MB of TF tensors out of resident memory until
+    // we actually need them, which matters on Render's 512 MB tier.
 
     // ── Start LoveBot cron job ───────────────────────────────────────
     startLoveBotCron();
