@@ -22,6 +22,7 @@ import LoveBotAddReason from "./screens/LoveBotAddReason";
 import Vault from "./screens/Vault";
 import VaultUnlock from "./screens/VaultUnlock";
 import Settings from "./screens/Settings";
+import Chat from "./screens/Chat";
 
 export const router = createBrowserRouter([
   // Public Routes
@@ -48,4 +49,5 @@ export const router = createBrowserRouter([
   { path: "/vault/unlock", element: <ProtectedRoute><VaultUnlock /></ProtectedRoute> },
   { path: "/vault", element: <ProtectedRoute><Vault /></ProtectedRoute> },
   { path: "/settings", element: <ProtectedRoute><Settings /></ProtectedRoute> },
+  { path: "/chat", element: <ProtectedRoute><Chat /></ProtectedRoute> },
 ]);

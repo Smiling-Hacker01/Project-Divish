@@ -1,0 +1,88 @@
+{
+  "expo": {
+    "name": "The Secret Space",
+    "slug": "secret-space-mobile",
+    "owner": "smiling-hacker",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "secretspace",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.divish.secretspace",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Use the camera to capture photos and videos for your shared space.",
+        "NSPhotoLibraryUsageDescription": "Allow access to your photo library to share memories with your partner.",
+        "NSFaceIDUsageDescription": "Use Face ID to unlock the vault and sign in securely.",
+        "NSMicrophoneUsageDescription": "Allow microphone access to send voice messages to your partner.",
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
+      }
+    },
+    "android": {
+      "package": "com.divish.secretspace",
+      "adaptiveIcon": {
+        "backgroundColor": "#0D0D0F"
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.POST_NOTIFICATIONS"
+      ],
+      "googleServicesFile": "./google-services.json"
+    },
+    "plugins": [
+      "expo-font",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow access to your photo library to share memories with your partner.",
+          "cameraPermission": "Use the camera to capture photos and videos to share."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow camera access to enroll Face ID."
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Use Face ID to unlock the vault."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#0D0D0F",
+          "androidMode": "default",
+          "androidCollapsedTitle": "Secret Space"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0D0D0F",
+          "image": "./assets/splash.png",
+          "imageWidth": 200,
+          "resizeMode": "contain"
+        }
+      ],
+      "expo-asset",
+      "@react-native-community/datetimepicker"
+    ],
+    "extra": {
+      "apiBaseUrl": "https://unsceptered-fruitily-ena.ngrok-free.dev/api",
+      "eas": {
+        "projectId": "e176f59a-6be9-45a0-9061-18b73c649e38"
+      }
+    }
+  }
+}

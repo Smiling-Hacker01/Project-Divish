@@ -6,6 +6,7 @@ import './config/firebase'; // Initialize Firebase Admin SDK for push notificati
 import { loadModels } from './services/face.service';
 import { validateJwtConfig } from './utils/jwt';
 import { startLoveBotCron } from './jobs/lovebot.cron';
+import { initializeChatSockets } from './websockets/chat.gateway';
 
 const PORT = process.env.PORT || 3000;
 
@@ -32,6 +33,9 @@ const start = async () => {
     const server = app.listen(PORT, () => {
       logger.info(`[Server] Running on port ${PORT} (${process.env.NODE_ENV || 'development'})`);
     });
+
+    // ── Initialize WebSockets ─────────────────────────────────────────
+    initializeChatSockets(server);
 
     // ── Graceful shutdown ────────────────────────────────────────────
     const shutdown = async (signal: string) => {

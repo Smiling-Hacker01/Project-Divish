@@ -1,7 +1,26 @@
 import { Request, Response, NextFunction } from 'express';
 import prisma from '../config/prisma';
+import logger from '../config/logger';
 import { createCouponSchema, updateCouponStatusSchema, couponReviewSchema } from '../utils/validators';
 import { sendPush } from '../services/notification.service';
+import { io } from '../websockets/chat.gateway';
+
+// ── Realtime helper ────────────────────────────────────────────────────────────
+// Emits `coupon_changed` to the couple's socket room so both partners' coupon lists
+// update without a manual pull-to-refresh. Mirrors the broadcastDiaryChange pattern.
+type CouponChange =
+  | { action: 'created'; couponId: string }
+  | { action: 'status'; couponId: string; status: string }
+  | { action: 'fulfilled'; couponId: string }
+  | { action: 'reviewed'; couponId: string };
+
+const broadcastCouponChange = (coupleId: string, change: CouponChange): void => {
+  try {
+    io?.to(coupleId).emit('coupon_changed', change);
+  } catch (err: any) {
+    logger.warn({ err: err?.message, coupleId }, '[Coupon] Broadcast failed (non-fatal)');
+  }
+};
 
 // ── GET /api/coupons ───────────────────────────────────────────────────────────
 export const getCoupons = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -109,6 +128,8 @@ export const createCoupon = async (req: Request, res: Response, next: NextFuncti
       },
     });
 
+    broadcastCouponChange(coupleId, { action: 'created', couponId: coupon.id });
+
     // Notify the recipient about the new coupon
     await sendPush(
       partnerId,
@@ -133,6 +154,11 @@ export const createCoupon = async (req: Request, res: Response, next: NextFuncti
 };
 
 // ── PATCH /api/coupons/:id/status ──────────────────────────────────────────────
+// State-machine transitions for a coupon. Each transition is gated by:
+//   1) authorization (recipient redeems; creator approves)
+//   2) expected current state (no skipping or repeating stages)
+//   3) an atomic conditional update so two parallel requests can't both succeed
+//      (the second sees affected-rows = 0 and we treat it as a no-op).
 export const updateStatus = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const parsed = updateCouponStatusSchema.safeParse(req.body);
@@ -151,25 +177,61 @@ export const updateStatus = async (req: Request, res: Response, next: NextFuncti
       return;
     }
 
+    // Authorization gates.
     if (status === 'pending' && coupon.recipientId !== userId) {
       res.status(403).json({ error: 'Only the recipient can redeem this coupon' });
       return;
     }
-
     if (status === 'used' && coupon.creatorId !== userId) {
       res.status(403).json({ error: 'Only the creator can approve this coupon redemption' });
       return;
     }
 
-    const updateData: any = { status };
-    if (status === 'pending' && (!coupon.redeemedAt)) {
-        updateData.redeemedAt = new Date();
+    // Idempotency: already in the target state → no-op success. Avoids re-firing
+    // the push notification when a user double-taps the action button.
+    if (coupon.status === status) {
+      res.json({ success: true, alreadyApplied: true });
+      return;
     }
 
-    await prisma.coupon.update({
-      where: { id },
+    // State-machine guard: every transition has a single legal predecessor.
+    //   active → pending (redeem)
+    //   pending → used (approve)
+    //   used → fulfilled (only via /fulfill, not this endpoint)
+    const expectedPrevStatus: Record<string, string> = {
+      pending: 'active',
+      used: 'pending',
+    };
+    const expected = expectedPrevStatus[status];
+    if (!expected) {
+      res.status(400).json({ error: `Cannot transition to status "${status}" via this endpoint` });
+      return;
+    }
+
+    const updateData: any = { status };
+    if (status === 'pending') {
+      updateData.redeemedAt = new Date();
+    }
+
+    // Conditional update — only writes if the row is still in the expected state.
+    // A parallel request that already flipped the status sees `count: 0` here.
+    const result = await prisma.coupon.updateMany({
+      where: { id, coupleId, status: expected },
       data: updateData,
     });
+
+    if (result.count === 0) {
+      // Someone else moved the state forward between our read and write. Reload
+      // and report what the current state actually is — clients can re-sync.
+      const fresh = await prisma.coupon.findUnique({ where: { id } });
+      res.status(409).json({
+        error: `Coupon is no longer in the expected state.`,
+        currentStatus: fresh?.status ?? null,
+      });
+      return;
+    }
+
+    broadcastCouponChange(coupleId, { action: 'status', couponId: id, status });
 
     // ── Send Push Notification based on lifecycle stage ──────────────────────
     try {
@@ -231,13 +293,21 @@ export const fulfillCoupon = async (req: Request, res: Response, next: NextFunct
        return;
     }
 
-    await prisma.coupon.update({
-      where: { id },
+    // Conditional update — only flips to fulfilled if the coupon is STILL `used`.
+    // A double-tap from the creator otherwise re-fires the push notification.
+    const result = await prisma.coupon.updateMany({
+      where: { id, coupleId, status: 'used' },
       data: {
         status: 'fulfilled',
         fulfilledAt: new Date(),
       },
     });
+    if (result.count === 0) {
+      res.status(409).json({ error: 'Coupon was already fulfilled or its state changed.' });
+      return;
+    }
+
+    broadcastCouponChange(coupleId, { action: 'fulfilled', couponId: id });
 
     // Notify the recipient that the coupon has been fulfilled + prompt for review
     await sendPush(
@@ -321,15 +391,22 @@ export const addReview = async (req: Request, res: Response, next: NextFunction)
       return;
     }
 
-    await prisma.coupon.update({
-      where: { id },
+    // Conditional update so two simultaneous review submissions can't both win and
+    // overwrite each other's text / rating.
+    const result = await prisma.coupon.updateMany({
+      where: { id, coupleId, reviewRating: null, status: 'fulfilled' },
       data: {
         reviewRating: rating,
         reviewText: text || null,
         reviewedAt: new Date(),
       },
     });
+    if (result.count === 0) {
+      res.status(409).json({ error: 'A review was already submitted for this coupon.' });
+      return;
+    }
 
+    broadcastCouponChange(coupleId, { action: 'reviewed', couponId: id });
     res.json({ success: true });
   } catch (err) {
     next(err);
