@@ -1,5 +1,11 @@
 import { Buffer } from 'buffer';
-import {
+import QuickCrypto from 'react-native-quick-crypto';
+
+// v0.7.x of quick-crypto exposes the Node-crypto-shaped API as properties of a default
+// export rather than as named exports. v1.x switched to named exports but requires
+// react-native-nitro-modules which only compiles against RN 0.77+. RN 0.76 forces us
+// onto the pre-nitro 0.7.x line.
+const {
   constants,
   createCipheriv,
   createDecipheriv,
@@ -7,7 +13,7 @@ import {
   privateDecrypt,
   publicEncrypt,
   randomBytes,
-} from 'react-native-quick-crypto';
+} = QuickCrypto;
 
 /**
  * End-to-End Encryption for mobile, byte-for-byte wire-compatible with the web client.
