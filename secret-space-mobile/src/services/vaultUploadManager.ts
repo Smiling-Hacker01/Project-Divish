@@ -27,6 +27,10 @@ export type PerEntryState = {
   status: 'queued' | 'uploading' | 'creating' | 'done' | 'failed';
   progress: number; // 0..1, only meaningful during 'uploading'
   error?: string;
+  // True when the user explicitly enqueued this in the current session (picker flow).
+  // False for entries auto-resumed from disk on app start — those upload silently and
+  // never trigger the foreground "Uploading…" banner.
+  userInitiated?: boolean;
 };
 
 export interface ManagerState {
@@ -57,6 +61,14 @@ let state: ManagerState = {
 const activeTasks = new Map<string, FileSystem.UploadTask>();
 let onDoneCallback: ((item: VaultItem) => void) | null = null;
 
+// Tracks which localIds were enqueued through `markSessionInitiated()` (i.e. the user
+// just picked them from the picker in this session). Entries NOT in this set are
+// being silently resumed from disk after a previous session's interrupted upload —
+// the grid should NOT show an "Uploading" banner for those, because from the user's
+// perspective they didn't initiate anything. The set is module-scoped (not persisted)
+// so it resets every cold start, which is the correct behaviour.
+const sessionInitiated = new Set<string>();
+
 const emit = () => {
   // Shallow copy so React diff'ing kicks in for subscribers.
   state = { ...state, entries: { ...state.entries } };
@@ -84,7 +96,13 @@ const recomputeAggregate = (queue: VaultQueueEntry[]) => {
 // Upload one entry: file → /vault/upload (multipart) → /vault POST with the URL.
 // Updates the queue on each step so a kill mid-stream resumes cleanly.
 const processOne = async (entry: VaultQueueEntry): Promise<void> => {
-  setEntryState(entry.localId, { status: 'uploading', progress: 0, error: undefined });
+  const userInitiated = sessionInitiated.has(entry.localId);
+  setEntryState(entry.localId, {
+    status: 'uploading',
+    progress: 0,
+    error: undefined,
+    userInitiated,
+  });
   try {
     // Step 1 — multipart upload (skipped if we already have a URL from a prior run).
     let url = entry.uploadedUrl;
@@ -237,6 +255,14 @@ const drainLoop = async () => {
 };
 
 export const vaultUploadManager = {
+  /** Mark the given localIds as belonging to the *current* user-initiated session
+   *  (e.g. just picked from the photo picker). Only these entries surface the
+   *  foreground "Uploading…" banner; auto-resumed entries from disk upload silently
+   *  to avoid the phantom-banner bug. */
+  markSessionInitiated: (ids: string[]): void => {
+    for (const id of ids) sessionInitiated.add(id);
+  },
+
   /** Start draining the queue. Idempotent. */
   drain: (): void => {
     void drainLoop();

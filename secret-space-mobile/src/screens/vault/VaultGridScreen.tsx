@@ -65,6 +65,35 @@ export function VaultGridScreen() {
     };
   }, []);
 
+  // ── Stale-queue garbage collection ───────────────────────────────────────────
+  // Sweep abandoned entries on every screen mount. The threshold was 24h previously
+  // but that's too generous — entries older than 1h that haven't completed are
+  // almost always abandoned (typical iPhone HEIC upload completes in <30s on LTE).
+  // Anything older was the cause of the phantom-banner reports.
+  //
+  // We also drop entries with `uploadedUrl` set but no completed DB-create —
+  // those were the ones triggering silent re-fires of the create endpoint on every
+  // vault-open. The Cloudinary asset becomes orphaned, which is acceptable for
+  // privacy (the user wanted the upload deleted anyway, conceptually) vs. the
+  // confusion of repeated phantom banners.
+  const STALE_QUEUE_AGE_MS = 60 * 60 * 1000;
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const entries = await vaultQueue.list();
+      const now = Date.now();
+      const stale = entries.filter((e) => now - e.queuedAt > STALE_QUEUE_AGE_MS);
+      if (cancelled || stale.length === 0) return;
+      for (const entry of stale) {
+        await vaultQueue.remove(entry.localId).catch(() => undefined);
+      }
+      if (__DEV__) console.log(`[Vault] GC removed ${stale.length} stale queue entries`);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // ── Initial + focused loads + queue resume ───────────────────────────────────
   const reload = useCallback(async () => {
     const epoch = ++fetchEpoch.current;
@@ -179,6 +208,10 @@ export function VaultGridScreen() {
       queuedAt: Date.now(),
     }));
     await vaultQueue.enqueueMany(entries);
+    // Flag these as user-initiated so the foreground "Uploading…" banner shows for
+    // them. Entries auto-resumed from disk (no picker tap this session) are NOT
+    // flagged and upload silently — that's the whole reason this distinction exists.
+    vaultUploadManager.markSessionInitiated(entries.map((e) => e.localId));
     vaultUploadManager.drain();
   };
 
@@ -309,12 +342,27 @@ export function VaultGridScreen() {
   const aggregateProgress = useMemo(() => {
     const entryStates = Object.values(uploadState.entries);
     if (entryStates.length === 0) return { active: 0, label: '' };
-    const inflight = entryStates.filter((e) => e.status === 'uploading' || e.status === 'creating');
+    // Two-condition filter:
+    //   1. status === 'uploading' — real byte transfer in flight (excludes the
+    //      sub-second 'creating' DB-write phase which used to flash a 100% banner)
+    //   2. userInitiated === true — entry was just picked in this session, not
+    //      auto-resumed from a stale disk queue. Resumed entries upload silently
+    //      so the user never sees "phantom" progress for work they didn't start.
+    const inflight = entryStates.filter(
+      (e) => e.status === 'uploading' && e.userInitiated === true
+    );
     if (inflight.length === 0) return { active: 0, label: '' };
-    const avgProgress = inflight.reduce((s, e) => s + (e.progress ?? 0), 0) / inflight.length;
+    // Cap the displayed progress at 99% to avoid the brief "100%" frame that lands
+    // between the last byte sent and status flipping to 'creating'.
+    const avgProgress = Math.min(
+      0.99,
+      inflight.reduce((s, e) => s + (e.progress ?? 0), 0) / inflight.length
+    );
     return {
       active: inflight.length,
-      label: `${uploadState.completed} of ${uploadState.total} · ${Math.round(avgProgress * 100)}%`,
+      label: `${uploadState.completed} of ${inflight.length + uploadState.completed} · ${Math.round(
+        avgProgress * 100
+      )}%`,
     };
   }, [uploadState]);
 
@@ -328,10 +376,25 @@ export function VaultGridScreen() {
           { icon: 'plus', onPress: () => setShowUploadSheet(true) },
         ]}
       />
-      <View style={{ paddingHorizontal: theme.screenPadding, marginTop: 4 }}>
-        <Text variant="caption" color="muted">
-          {items.length} memories · private
-        </Text>
+      {/* Header status row — count on the left, lock badge on the right. Both lines
+          read as one cohesive sub-title for the screen. When an upload is in flight
+          the count line is replaced by the progress label below, so the eye doesn't
+          have to track two pieces of state simultaneously. */}
+      <View
+        style={[
+          styles.headerStatus,
+          {
+            paddingHorizontal: theme.screenPadding,
+            borderBottomColor: theme.colors.hairline,
+          },
+        ]}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Feather name="shield" size={12} color={theme.colors.muted} />
+          <Text variant="caption" color="muted" style={{ marginLeft: 6 }}>
+            {items.length} {items.length === 1 ? 'memory' : 'memories'} · end-to-end private
+          </Text>
+        </View>
       </View>
 
       {/* Aggregate upload progress banner */}
@@ -343,7 +406,7 @@ export function VaultGridScreen() {
           ]}
         >
           <ActivityIndicator size="small" color={theme.colors.primary} />
-          <Text variant="bodySmall" style={{ marginLeft: 10, flex: 1 }}>
+          <Text variant="bodySmall" style={{ marginLeft: 10, flex: 1 }} numberOfLines={1}>
             Uploading {aggregateProgress.label}
           </Text>
           <Pressable onPress={() => vaultUploadManager.cancelAll()} hitSlop={8}>
@@ -637,6 +700,11 @@ function Lightbox({
 }
 
 const styles = StyleSheet.create({
+  headerStatus: {
+    paddingTop: 4,
+    paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
   tile: {
     width: TILE_SIZE,
     height: TILE_SIZE,

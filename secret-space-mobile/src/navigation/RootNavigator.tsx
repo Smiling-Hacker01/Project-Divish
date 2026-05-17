@@ -20,6 +20,9 @@ import { CouponCreateScreen } from '@/screens/coupons/CouponCreateScreen';
 import { CouponDetailScreen } from '@/screens/coupons/CouponDetailScreen';
 import { AddReasonScreen } from '@/screens/lovebot/AddReasonScreen';
 import { SettingsScreen } from '@/screens/settings/SettingsScreen';
+import { ChangePasswordScreen } from '@/screens/settings/ChangePasswordScreen';
+import { FaceReenrollScreen } from '@/screens/settings/FaceReenrollScreen';
+import { AboutScreen } from '@/screens/settings/AboutScreen';
 import { DailyLoginScreen } from '@/screens/streak/DailyLoginScreen';
 import { setNotificationTapHandler } from '@/services/push';
 
@@ -86,6 +89,9 @@ export function RootNavigator() {
             <Stack.Screen name="CouponDetail" component={CouponDetailScreen} />
             <Stack.Screen name="AddReason" component={AddReasonScreen} options={{ presentation: 'modal' }} />
             <Stack.Screen name="Settings" component={SettingsScreen} />
+            <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
+            <Stack.Screen name="FaceReenroll" component={FaceReenrollScreen} />
+            <Stack.Screen name="About" component={AboutScreen} />
             <Stack.Screen
               name="DailyLogin"
               component={DailyLoginScreen}

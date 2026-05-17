@@ -55,12 +55,23 @@ const base64ToBytes = (b64: string): string => forge.util.decode64(b64);
  */
 export const generateRSAKeyPair = async (): Promise<{ publicKey: string; privateKey: string }> => {
   await ensureSeeded();
+  if (__DEV__) console.log('[Crypto] Starting RSA-2048 keygen…');
+  const startedAt = Date.now();
   return new Promise((resolve, reject) => {
-    // node-forge can do this synchronously, but we use the async/worker form so the
-    // bridge doesn't lock up while we churn modular-exponentiation.
-    forge.pki.rsa.generateKeyPair(
-      { bits: 2048, workers: -1 },
-      (err, keyPair) => {
+    // IMPORTANT: do NOT pass `workers` here. React Native has no Web Worker support,
+    // so `workers: -1` (spawn navigator.hardwareConcurrency workers) silently hangs —
+    // node-forge tries to spawn workers, finds none, and the callback never fires.
+    // The default (no `workers` option) uses async time-slicing via setImmediate.
+    //
+    // BITS: 1024 here is a testing-tier compromise. Pure-JS RSA-2048 takes 60-200s on
+    // mid-tier Android (verified at 187s) — unusable as a first-launch UX. 1024-bit
+    // gets us to 15-30s while still being decryption-compatible with web's 2048-bit
+    // keys (RSA-OAEP doesn't care about the other side's key size).
+    //
+    // PRODUCTION TODO: swap node-forge for `react-native-quick-crypto` (native bindings,
+    // ~100ms for 2048-bit keygen). That's a fresh `eas build` because it ships native
+    // code, so we defer it until you're done verifying feature flows.
+    forge.pki.rsa.generateKeyPair({ bits: 1024 }, (err, keyPair) => {
         if (err || !keyPair) {
           reject(err ?? new Error('Key generation failed'));
           return;
@@ -73,6 +84,9 @@ export const generateRSAKeyPair = async (): Promise<{ publicKey: string; private
           const pkcs8Der = forge.asn1
             .toDer(forge.pki.wrapRsaPrivateKey(forge.pki.privateKeyToAsn1(keyPair.privateKey)))
             .getBytes();
+          if (__DEV__) {
+            console.log(`[Crypto] Keygen done in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
+          }
           resolve({
             publicKey: bytesToBase64(spkiDer),
             privateKey: bytesToBase64(pkcs8Der),

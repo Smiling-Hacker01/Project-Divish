@@ -2,15 +2,12 @@
   "expo": {
     "name": "The Secret Space",
     "slug": "secret-space-mobile",
+    "owner": "smiling-hacker",
     "version": "1.0.0",
     "orientation": "portrait",
     "scheme": "secretspace",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-    "splash": {
-      "backgroundColor": "#0D0D0F",
-      "resizeMode": "contain"
-    },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.divish.secretspace",
@@ -19,7 +16,9 @@
         "NSPhotoLibraryUsageDescription": "Allow access to your photo library to share memories with your partner.",
         "NSFaceIDUsageDescription": "Use Face ID to unlock the vault and sign in securely.",
         "NSMicrophoneUsageDescription": "Allow microphone access to send voice messages to your partner.",
-        "UIBackgroundModes": ["remote-notification"]
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
       }
     },
     "android": {
@@ -28,12 +27,12 @@
         "backgroundColor": "#0D0D0F"
       },
       "permissions": [
-        "CAMERA",
-        "USE_BIOMETRIC",
-        "USE_FINGERPRINT",
-        "RECORD_AUDIO",
-        "READ_EXTERNAL_STORAGE",
-        "POST_NOTIFICATIONS"
+        "android.permission.CAMERA",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.POST_NOTIFICATIONS"
       ],
       "googleServicesFile": "./google-services.json"
     },
@@ -67,11 +66,23 @@
           "androidCollapsedTitle": "Secret Space"
         }
       ],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0D0D0F",
+          "image": "./assets/splash.png",
+          "imageWidth": 200,
+          "resizeMode": "contain"
+        }
+      ],
       "expo-asset",
       "@react-native-community/datetimepicker"
     ],
     "extra": {
-      "apiBaseUrl": "http://localhost:5050/api"
+      "apiBaseUrl": "https://unsceptered-fruitily-ena.ngrok-free.dev/api",
+      "eas": {
+        "projectId": "e176f59a-6be9-45a0-9061-18b73c649e38"
+      }
     }
   }
 }

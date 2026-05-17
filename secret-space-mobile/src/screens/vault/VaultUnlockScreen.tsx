@@ -8,6 +8,12 @@ import { useTheme } from '@/theme';
 import { vaultApi } from '@/api';
 import { vaultUploadManager } from '@/services/vaultUploadManager';
 
+// After this many consecutive biometric failures we stop offering the biometric
+// option and force the password path. OS-level rate limiting kicks in after ~5
+// failures on most Android devices (BiometricPrompt locks for 30s), but we surface
+// the password fallback earlier to avoid the user getting stuck.
+const MAX_BIOMETRIC_ATTEMPTS = 3;
+
 export function VaultUnlockScreen() {
   const theme = useTheme();
   const navigation = useNavigation<any>();
@@ -15,6 +21,7 @@ export function VaultUnlockScreen() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [unlocking, setUnlocking] = useState(false);
+  const [biometricAttempts, setBiometricAttempts] = useState(0);
   const pulse = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
@@ -50,10 +57,28 @@ export function VaultUnlockScreen() {
         disableDeviceFallback: false,
       });
       if (!auth.success) {
-        setError('Biometric check failed. Try a password.');
+        const nextAttempts = biometricAttempts + 1;
+        setBiometricAttempts(nextAttempts);
+        // After N consecutive failures we lock the biometric option and only show
+        // the password field. The user can still tap "Unlock with Face ID" again
+        // if they want to retry after backing out, but the auto-prompt is gated
+        // by this counter so we don't trap them in a retry loop.
+        if (nextAttempts >= MAX_BIOMETRIC_ATTEMPTS) {
+          setError('Too many biometric failures. Use your password to continue.');
+        } else {
+          setError(
+            auth.error === 'user_cancel'
+              ? 'Biometric cancelled. Try again or use a password.'
+              : `Biometric check failed. ${MAX_BIOMETRIC_ATTEMPTS - nextAttempts} ${
+                  MAX_BIOMETRIC_ATTEMPTS - nextAttempts === 1 ? 'attempt' : 'attempts'
+                } left.`
+          );
+        }
         setShowPasswordField(true);
         return;
       }
+      // Successful unlock — reset the counter so a future re-lock starts fresh.
+      setBiometricAttempts(0);
       await vaultApi.unlock();
       // Resume any uploads that were paused when the token expired mid-batch.
       vaultUploadManager.resumeAfterUnlock();
@@ -88,13 +113,16 @@ export function VaultUnlockScreen() {
   };
 
   // Auto-prompt for biometrics on first focus so the user doesn't have to tap twice.
-  // (They can still tap "Unlock with Face ID" again if they cancel.)
+  // We skip the auto-prompt entirely if the user has already failed N times — at
+  // that point the password field is the more useful default.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const hasHardware = await LocalAuthentication.hasHardwareAsync();
       const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-      if (!cancelled && hasHardware && isEnrolled) tryFaceId();
+      if (!cancelled && hasHardware && isEnrolled && biometricAttempts < MAX_BIOMETRIC_ATTEMPTS) {
+        tryFaceId();
+      }
     })();
     return () => {
       cancelled = true;
@@ -144,17 +172,33 @@ export function VaultUnlockScreen() {
 
         <View style={styles.ctas}>
           <Button
-            label={showPasswordField ? 'Unlock' : 'Unlock with Face ID'}
+            label={showPasswordField ? 'Unlock' : 'Unlock with biometrics'}
             leadingIcon={showPasswordField ? 'unlock' : 'user-check'}
             fullWidth
             onPress={showPasswordField ? tryPassword : tryFaceId}
             loading={unlocking}
             disabled={showPasswordField && password.length === 0}
           />
-          {!showPasswordField && (
+          {/* Once the user has exhausted biometric attempts, hide the retry link so
+              they don't get caught in the failure loop again. */}
+          {!showPasswordField && biometricAttempts < MAX_BIOMETRIC_ATTEMPTS && (
             <Pressable onPress={() => setShowPasswordField(true)} style={{ marginTop: 16, alignSelf: 'center' }}>
               <Text variant="bodySmall" color="muted">
                 Use password instead
+              </Text>
+            </Pressable>
+          )}
+          {showPasswordField && biometricAttempts < MAX_BIOMETRIC_ATTEMPTS && (
+            <Pressable
+              onPress={() => {
+                setShowPasswordField(false);
+                setError(null);
+                tryFaceId();
+              }}
+              style={{ marginTop: 16, alignSelf: 'center' }}
+            >
+              <Text variant="bodySmall" color="muted">
+                Try biometrics again
               </Text>
             </Pressable>
           )}

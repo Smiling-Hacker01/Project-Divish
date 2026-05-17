@@ -37,6 +37,9 @@ export type RootStackParamList = {
   CouponDetail: { id: string };
   AddReason: undefined;
   Settings: undefined;
+  ChangePassword: undefined;
+  FaceReenroll: undefined;
+  About: undefined;
   DailyLogin: undefined;
 };
 

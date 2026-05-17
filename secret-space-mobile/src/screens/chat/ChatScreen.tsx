@@ -62,6 +62,11 @@ export function ChatScreen() {
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordSeconds, setRecordSeconds] = useState(0);
+  // Audio preview state — sits between recording-stopped and sending. Lets the user
+  // listen back, re-record, or discard before committing.
+  const [audioPreview, setAudioPreview] = useState<{ uri: string; durationMs: number } | null>(null);
+  const [previewPlaying, setPreviewPlaying] = useState(false);
+  const previewSoundRef = useRef<Audio.Sound | null>(null);
   const [actionFor, setActionFor] = useState<ChatMessage | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
@@ -1010,7 +1015,11 @@ export function ChatScreen() {
     }
   };
 
-  const stopAndSendRecording = async () => {
+  // Stop recording and move to PREVIEW state — does not send yet. The user can play
+  // back, discard, or send from the preview UI. This matches the WhatsApp / iMessage
+  // voice-note convention; the previous one-tap stop-and-send was too easy to
+  // accidentally fire.
+  const stopAndPreviewRecording = async () => {
     const rec = recording;
     if (!rec) return;
     try {
@@ -1019,15 +1028,14 @@ export function ChatScreen() {
       setRecording(null);
       const uri = rec.getURI();
       if (!uri) return;
-      // NOTE on E2EE: voice notes from mobile remain stored as Cloudinary URLs (not
-      // inline encrypted base64 like web's `'voice'` mediaType). Bringing them under
-      // the encrypted path requires changes to the web player too — out of scope for
-      // this round; tracked separately.
-      await sendAttachment(
-        { uri },
-        'audio',
-        Platform.OS === 'ios' ? 'audio/m4a' : 'audio/mp4'
-      );
+      // Recording status carries the final duration; fall back to our tick counter
+      // (in seconds) if it isn't reported by the platform.
+      const status = await rec.getStatusAsync().catch(() => null);
+      const durationMs =
+        status && typeof status.durationMillis === 'number' && status.durationMillis > 0
+          ? status.durationMillis
+          : recordSeconds * 1000;
+      setAudioPreview({ uri, durationMs });
     } catch (e: any) {
       Alert.alert('Could not save recording', e?.message ?? 'Try again.');
     }
@@ -1045,6 +1053,72 @@ export function ChatScreen() {
     setRecording(null);
   };
 
+  // ── Audio preview controls ──────────────────────────────────────────────────
+  // The preview sound is created lazily on first play. We unload it on discard /
+  // send / unmount so we don't accumulate native audio handles across recordings.
+  const previewToggle = async () => {
+    if (!audioPreview) return;
+    try {
+      if (previewPlaying) {
+        await previewSoundRef.current?.pauseAsync();
+        setPreviewPlaying(false);
+        return;
+      }
+      // iOS routes recording-mode audio through the earpiece; switch back to playback
+      // mode so the preview plays through the loud speaker like the user expects.
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+      if (!previewSoundRef.current) {
+        const { sound } = await Audio.Sound.createAsync({ uri: audioPreview.uri });
+        previewSoundRef.current = sound;
+        sound.setOnPlaybackStatusUpdate((s) => {
+          if (s.isLoaded && s.didJustFinish) {
+            setPreviewPlaying(false);
+            sound.setPositionAsync(0).catch(() => undefined);
+          }
+        });
+      }
+      await previewSoundRef.current.playAsync();
+      setPreviewPlaying(true);
+    } catch (e: any) {
+      Alert.alert('Could not play preview', e?.message ?? 'Try again.');
+    }
+  };
+
+  const discardAudioPreview = async () => {
+    await previewSoundRef.current?.unloadAsync().catch(() => undefined);
+    previewSoundRef.current = null;
+    setPreviewPlaying(false);
+    // Best-effort cleanup of the temp file Expo wrote during recording.
+    if (audioPreview?.uri) {
+      FileSystem.deleteAsync(audioPreview.uri, { idempotent: true }).catch(() => undefined);
+    }
+    setAudioPreview(null);
+  };
+
+  const sendAudioPreview = async () => {
+    if (!audioPreview) return;
+    const uri = audioPreview.uri;
+    // Tear down the player BEFORE the upload starts so we're not holding a native
+    // handle to a file we're about to upload.
+    await previewSoundRef.current?.unloadAsync().catch(() => undefined);
+    previewSoundRef.current = null;
+    setPreviewPlaying(false);
+    setAudioPreview(null);
+    await sendAttachment(
+      { uri },
+      'audio',
+      Platform.OS === 'ios' ? 'audio/m4a' : 'audio/mp4'
+    );
+  };
+
+  // Unload the preview sound on screen unmount so we don't leak the native handle.
+  useEffect(() => {
+    return () => {
+      previewSoundRef.current?.unloadAsync().catch(() => undefined);
+      previewSoundRef.current = null;
+    };
+  }, []);
+
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <ScreenContainer>
@@ -1052,18 +1126,23 @@ export function ChatScreen() {
         leadingElement={null}
         showBack
         centerElement={
-          <View style={{ alignItems: 'center' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={{ alignItems: 'center', flexShrink: 1, maxWidth: '100%' }}>
+            <View
+              style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1 }}
+            >
               <Avatar
                 uri={user?.partnerAvatar ?? null}
                 name={user?.partnerName ?? 'Partner'}
-                size={28}
+                size={32}
                 ring="gold"
               />
-              <View style={{ marginLeft: 10 }}>
-                <Text variant="bodyMedium">{user?.partnerName ?? 'Partner'}</Text>
+              <View style={{ marginLeft: 10, flexShrink: 1 }}>
+                <Text variant="bodyMedium" numberOfLines={1} style={{ maxWidth: 180 }}>
+                  {user?.partnerName ?? 'Partner'}
+                </Text>
                 <Text
                   variant="caption"
+                  numberOfLines={1}
                   style={{
                     color: partnerTyping ? theme.colors.success : theme.colors.muted,
                     fontStyle: 'italic',
@@ -1120,8 +1199,8 @@ export function ChatScreen() {
           ]}
         >
           <Feather name="lock" size={12} color={theme.colors.muted} />
-          <Text variant="caption" color="muted" style={{ marginLeft: 8 }}>
-            Securing your space…
+          <Text variant="caption" color="muted" style={{ marginLeft: 8, flex: 1 }}>
+            Setting up encryption (one-time, ~30s) — feel free to use other tabs.
           </Text>
         </View>
       )}
@@ -1227,7 +1306,76 @@ export function ChatScreen() {
             >
               <Feather name="x" size={18} color={theme.colors.foreground} />
             </Pressable>
-            <Pressable onPress={stopAndSendRecording}>
+            {/* Stop → moves into preview state (does NOT send immediately). The
+                square icon mirrors the iMessage / WhatsApp convention. */}
+            <Pressable onPress={stopAndPreviewRecording}>
+              <LinearGradient
+                colors={theme.gradientStops as unknown as readonly [string, string]}
+                style={[styles.iconBtn, theme.shadows.glowSoft]}
+              >
+                <Feather name="square" size={14} color="#fff" />
+              </LinearGradient>
+            </Pressable>
+          </View>
+        ) : audioPreview ? (
+          /* ────── Voice-note preview ────────────────────────────────────────
+             Sits between record and send: tap play to verify the take, tap trash
+             to discard + re-record, tap send to commit. */
+          <View style={[styles.composer, { borderTopColor: theme.colors.hairline }]}>
+            <Pressable
+              onPress={discardAudioPreview}
+              style={[styles.iconBtn, { backgroundColor: theme.colors.surface }]}
+              hitSlop={6}
+            >
+              <Feather name="trash-2" size={18} color={theme.colors.destructive} />
+            </Pressable>
+            <View
+              style={[
+                styles.recordPill,
+                { backgroundColor: theme.colors.surface, borderColor: theme.colors.hairline },
+              ]}
+            >
+              <Pressable
+                onPress={previewToggle}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 14,
+                  backgroundColor: theme.colors.primarySoft,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                hitSlop={6}
+              >
+                <Feather
+                  name={previewPlaying ? 'pause' : 'play'}
+                  size={14}
+                  color={theme.colors.foreground}
+                />
+              </Pressable>
+              <View style={[styles.waveform, { flex: 1, marginLeft: 12 }]}>
+                {Array.from({ length: 18 }).map((_, i) => (
+                  <View
+                    key={i}
+                    style={[
+                      styles.waveBar,
+                      {
+                        height: 4 + ((i * 11) % 18),
+                        backgroundColor: previewPlaying
+                          ? theme.colors.primary
+                          : theme.colors.muted,
+                      },
+                    ]}
+                  />
+                ))}
+              </View>
+              <Text variant="caption" color="muted" style={{ marginLeft: 8 }}>
+                {`${String(Math.floor(audioPreview.durationMs / 60000)).padStart(1, '0')}:${String(
+                  Math.floor((audioPreview.durationMs % 60000) / 1000)
+                ).padStart(2, '0')}`}
+              </Text>
+            </View>
+            <Pressable onPress={sendAudioPreview} hitSlop={6}>
               <LinearGradient
                 colors={theme.gradientStops as unknown as readonly [string, string]}
                 style={[styles.iconBtn, theme.shadows.glowSoft]}
@@ -1268,7 +1416,13 @@ export function ChatScreen() {
                   socket?.emit('typing', t.length > 0);
                 }}
                 onBlur={() => socket?.emit('typing', false)}
-                placeholder={editingId ? 'Edit your message…' : `Message ${user?.partnerName ?? 'them'}…`}
+                // First name only — partner names like "Vishal Singh Kushwaha" wrap to
+                // two lines inside the composer pill, breaking the bottom bar layout.
+                placeholder={
+                  editingId
+                    ? 'Edit your message…'
+                    : `Message ${(user?.partnerName ?? 'them').split(' ')[0]}…`
+                }
                 placeholderTextColor={theme.colors.muted}
                 style={{
                   flex: 1,
