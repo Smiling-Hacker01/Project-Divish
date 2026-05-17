@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { Pressable, StyleSheet, View, ViewStyle } from 'react-native';
+import { Alert, Modal, Pressable, StyleSheet, View, ViewStyle } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import { ScreenContainer, TopBar, Text, Avatar, Chip, SegmentedControl } from '@/components';
+import { ScreenContainer, TopBar, Text, Avatar, Button, Chip, SegmentedControl } from '@/components';
 import { useTheme, useThemePreference } from '@/theme';
 import { useAuth } from '@/context/AuthContext';
 import { settingsApi } from '@/api';
@@ -33,9 +33,54 @@ const ICON_SIZE = 20;
 
 export function SettingsScreen() {
   const theme = useTheme();
-  const navigation = useNavigation();
+  const navigation = useNavigation<any>();
   const { preference, setPreference } = useThemePreference();
-  const { user, logout, notificationsEnabled, setNotificationsEnabled } = useAuth();
+  const { user, logout, notificationsEnabled, setNotificationsEnabled, refreshProfile } = useAuth();
+  const [faceSheetOpen, setFaceSheetOpen] = useState(false);
+
+  const onFaceIdPress = () => {
+    // Active → present a sheet with two destructive-leaning options. Inactive →
+    // jump straight to the (settings-context) re-enroll screen, which uses JWT
+    // auth rather than the signup-time email+password flow.
+    if (user?.faceMFAEnabled) {
+      setFaceSheetOpen(true);
+    } else {
+      navigation.navigate('FaceReenroll');
+    }
+  };
+
+  const reenrollFace = () => {
+    setFaceSheetOpen(false);
+    // Brief delay so the modal animates out before the next screen takes over —
+    // same iOS modal-on-modal pattern we use elsewhere.
+    setTimeout(() => navigation.navigate('FaceReenroll'), 250);
+  };
+
+  const disableFace = () => {
+    setFaceSheetOpen(false);
+    Alert.alert(
+      'Turn off Face ID?',
+      "You'll only be able to sign in with your email and password. You can re-enroll any time.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Turn off',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await settingsApi.deleteFaceDescriptor();
+              await refreshProfile();
+            } catch (e: any) {
+              Alert.alert(
+                'Could not turn off Face ID',
+                e?.response?.data?.error ?? e?.message ?? 'Try again later.'
+              );
+            }
+          },
+        },
+      ]
+    );
+  };
 
   return (
     <ScreenContainer scroll>
@@ -115,6 +160,7 @@ export function SettingsScreen() {
           <SettingsRow
             leading={<IconLeading name="user-check" />}
             title="Face ID"
+            onPress={onFaceIdPress}
             trailing={
               user?.faceMFAEnabled ? (
                 <Chip label="Active" tone="sage" size="sm" />
@@ -124,7 +170,12 @@ export function SettingsScreen() {
             }
             chevron
           />
-          <SettingsRow leading={<IconLeading name="key" />} title="Change password" chevron />
+          <SettingsRow
+            leading={<IconLeading name="key" />}
+            title="Change password"
+            onPress={() => navigation.navigate('ChangePassword')}
+            chevron
+          />
         </SettingsSection>
 
         <SettingsSection label="Notifications">
@@ -152,11 +203,55 @@ export function SettingsScreen() {
           </View>
         </SettingsSection>
 
+        <SettingsSection label="About">
+          <SettingsRow
+            leading={<IconLeading name="heart" />}
+            title="About this app"
+            subtitle="The story behind The Secret Space"
+            onPress={() => navigation.navigate('About')}
+            chevron
+          />
+        </SettingsSection>
+
         <SettingsSection label="Account">
           <SettingsRow title="Log out" titleColor="muted" onPress={logout} />
           <SettingsRow title="Leave the space" titleColor="destructive" onPress={() => {}} />
         </SettingsSection>
       </View>
+
+      {/* Face ID action sheet — shown when the row is tapped and Face MFA is
+          currently active. Re-enroll routes through the same FaceEnrollScreen used
+          at signup. Turn off hits DELETE /settings/face-descriptor. */}
+      <Modal
+        visible={faceSheetOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setFaceSheetOpen(false)}
+      >
+        <Pressable style={styles.sheetScrim} onPress={() => setFaceSheetOpen(false)}>
+          <Pressable
+            onPress={() => {}}
+            style={[styles.sheet, { backgroundColor: theme.colors.surface }]}
+          >
+            <View style={[styles.sheetHandle, { backgroundColor: theme.colors.hairlineStrong }]} />
+            <Text variant="h3" align="center" style={{ marginTop: 16, marginBottom: 4 }}>
+              Face ID
+            </Text>
+            <Text variant="bodySmall" color="muted" align="center" style={{ marginBottom: 20 }}>
+              Re-enroll your face or turn off this sign-in method.
+            </Text>
+            <Button label="Re-enroll face" leadingIcon="user-check" fullWidth onPress={reenrollFace} />
+            <Button
+              label="Turn off Face ID"
+              leadingIcon="x-circle"
+              variant="ghost"
+              style={{ marginTop: 8 }}
+              fullWidth
+              onPress={disableFace}
+            />
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ScreenContainer>
   );
 }
@@ -367,4 +462,12 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
   },
+  sheetScrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  sheet: {
+    padding: 24,
+    paddingBottom: 32,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+  },
+  sheetHandle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2 },
 });

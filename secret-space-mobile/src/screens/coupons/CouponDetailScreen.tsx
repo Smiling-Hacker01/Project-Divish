@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -8,11 +8,13 @@ import { couponsApi } from '@/api';
 import { Coupon } from '@/types/api';
 import { CouponCard } from './CouponsListScreen';
 import { RootStackParamList } from '@/navigation/types';
+import { useChatSocket } from '@/context/ChatSocketContext';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CouponDetail'>;
 
 export function CouponDetailScreen({ route, navigation }: Props) {
   const theme = useTheme();
+  const { subscribeCoupons } = useChatSocket();
   const [coupon, setCoupon] = useState<Coupon | null>(null);
   const [rating, setRating] = useState(0);
   const [reviewText, setReviewText] = useState('');
@@ -21,13 +23,23 @@ export function CouponDetailScreen({ route, navigation }: Props) {
     couponsApi.get(route.params.id).then(setCoupon).catch(() => {});
   }, [route.params.id]);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     try {
       setCoupon(await couponsApi.get(route.params.id));
     } catch {
       // ignore
     }
-  };
+  }, [route.params.id]);
+
+  // Realtime: refetch when ANY coupon lifecycle event fires for this coupon — so
+  // when the creator approves or fulfills it on their device, the recipient's
+  // detail screen reflects the new state immediately.
+  useEffect(() => {
+    const unsub = subscribeCoupons((evt) => {
+      if (evt.couponId === route.params.id) refresh();
+    });
+    return unsub;
+  }, [subscribeCoupons, route.params.id, refresh]);
 
   if (!coupon)
     return (
@@ -132,60 +144,119 @@ export function CouponDetailScreen({ route, navigation }: Props) {
           />
         )}
 
-        {coupon.status === 'Fulfilled' && (
-          <Card style={{ marginTop: 24 }}>
-            <Text variant="overline" color="muted">
-              Rate this experience
-            </Text>
-            <View style={{ flexDirection: 'row', marginTop: 12, gap: 8 }}>
-              {[1, 2, 3, 4, 5].map((n) => (
-                <Pressable key={n} onPress={() => setRating(n)}>
-                  <Feather
-                    name="star"
-                    size={28}
-                    color={rating >= n ? theme.colors.accent : theme.colors.muted}
-                  />
-                </Pressable>
-              ))}
-            </View>
-            <View style={{ marginTop: 16 }}>
-              <Input
-                label="Leave a sweet note"
-                value={reviewText}
-                onChangeText={setReviewText}
-                multiline
-                rows={3}
-              />
-            </View>
-            <Button
-              label={coupon.reviewRating ? 'Update review' : 'Save review'}
-              style={{ marginTop: 16 }}
-              fullWidth
-              onPress={review}
-              disabled={!rating}
-            />
+        {coupon.status === 'Fulfilled' && (() => {
+          const reviewSubmitted = coupon.reviewRating !== null && coupon.reviewRating !== undefined;
+          const isRecipient = coupon.recipient === 'you';
+          const ratingValue = coupon.reviewRating ?? 0;
 
-            {coupon.reviewRating && coupon.recipient !== 'you' && coupon.reviewText ? (
-              <Card variant="glass" style={{ marginTop: 16 }}>
+          // Three distinct UI states for the review card:
+          //   1. Recipient hasn't reviewed yet → show form, only the recipient sees it
+          //   2. Recipient is waiting on themselves to review → recipient sees form,
+          //      creator sees a "Awaiting their note" placeholder
+          //   3. Review submitted → both see the read-only review card
+          if (reviewSubmitted) {
+            return (
+              <Card style={{ marginTop: 24 }}>
                 <Text variant="overline" color="muted">
-                  Their note
+                  {isRecipient ? 'Your review' : 'Their review'}
                 </Text>
-                <Text variant="serifQuote" style={{ fontSize: 16, marginTop: 8 }} italic>
-                  “{coupon.reviewText}”
-                </Text>
+                <View style={{ flexDirection: 'row', marginTop: 12, gap: 6 }}>
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <Feather
+                      key={n}
+                      name="star"
+                      size={22}
+                      color={ratingValue >= n ? theme.colors.accent : theme.colors.muted}
+                    />
+                  ))}
+                </View>
+                {coupon.reviewText && coupon.reviewText.length > 0 && (
+                  <Text variant="serifQuote" style={{ fontSize: 16, marginTop: 12 }} italic>
+                    “{coupon.reviewText}”
+                  </Text>
+                )}
+                {coupon.reviewedAt && (
+                  <Text variant="caption" color="muted" style={{ marginTop: 10 }}>
+                    {new Date(coupon.reviewedAt).toLocaleString()}
+                  </Text>
+                )}
               </Card>
-            ) : null}
-          </Card>
-        )}
+            );
+          }
+
+          // No review yet — only the recipient can submit one. The creator sees a
+          // soft placeholder so they know feedback is pending.
+          if (!isRecipient) {
+            return (
+              <Card variant="glass" style={{ marginTop: 24 }}>
+                <Text variant="overline" color="muted">
+                  Their review
+                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}>
+                  <Feather name="clock" size={14} color={theme.colors.muted} />
+                  <Text variant="bodySmall" color="muted" style={{ marginLeft: 8 }}>
+                    Waiting for {coupon.recipient === 'you' ? 'your' : 'their'} note…
+                  </Text>
+                </View>
+              </Card>
+            );
+          }
+
+          // Recipient + not yet reviewed → show the form.
+          return (
+            <Card style={{ marginTop: 24 }}>
+              <Text variant="overline" color="muted">
+                Rate this experience
+              </Text>
+              <View style={{ flexDirection: 'row', marginTop: 12, gap: 8 }}>
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <Pressable key={n} onPress={() => setRating(n)} hitSlop={6}>
+                    <Feather
+                      name="star"
+                      size={28}
+                      color={rating >= n ? theme.colors.accent : theme.colors.muted}
+                    />
+                  </Pressable>
+                ))}
+              </View>
+              <View style={{ marginTop: 16 }}>
+                <Input
+                  label="Leave a sweet note (optional)"
+                  value={reviewText}
+                  onChangeText={setReviewText}
+                  multiline
+                  rows={3}
+                />
+              </View>
+              <Button
+                label="Save review"
+                style={{ marginTop: 16 }}
+                fullWidth
+                onPress={review}
+                disabled={!rating}
+              />
+              <Text
+                variant="caption"
+                color="muted"
+                style={{ marginTop: 8, textAlign: 'center' }}
+              >
+                You can only submit a review once.
+              </Text>
+            </Card>
+          );
+        })()}
       </View>
     </ScreenContainer>
   );
 }
 
+// Each step takes 1/3 of the row width — the wider allotment guarantees long labels
+// like "Requested" / "Fulfilled" fit on a single line on every screen size, and the
+// connecting StepLine still gets a flex segment between dots.
 function StepDot({ active, label }: { active?: boolean; label: string }) {
   const theme = useTheme();
   return (
-    <View style={{ alignItems: 'center', width: 70 }}>
+    <View style={{ alignItems: 'center', flex: 1 }}>
       <View
         style={[
           styles.dot,
@@ -195,7 +266,14 @@ function StepDot({ active, label }: { active?: boolean; label: string }) {
           },
         ]}
       />
-      <Text variant="caption" color={active ? 'foreground' : 'muted'} style={{ marginTop: 6 }}>
+      <Text
+        variant="caption"
+        color={active ? 'foreground' : 'muted'}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.85}
+        style={{ marginTop: 6, textAlign: 'center' }}
+      >
         {label}
       </Text>
     </View>
@@ -204,13 +282,15 @@ function StepDot({ active, label }: { active?: boolean; label: string }) {
 
 function StepLine({ muted }: { muted?: boolean }) {
   const theme = useTheme();
+  // marginBottom aligns the connector line with the centre of the dots above the
+  // label. The label area is roughly 20px tall (line-height + margin), so we push
+  // the line up by ~half that to land on the dot's vertical centre.
   return (
     <View
       style={{
-        flex: 1,
+        width: 18,
         height: 2,
         backgroundColor: muted ? theme.colors.hairlineStrong : theme.colors.primary,
-        marginHorizontal: 4,
         marginBottom: 22,
       }}
     />

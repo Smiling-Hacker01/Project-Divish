@@ -8,7 +8,7 @@ import {
   unregisterPushNotifications,
   teardownPushNotifications,
 } from '@/services/push';
-import { clearKeyPair } from '@/services/cryptoIdentity';
+import { clearKeyPair, getOrCreateKeyPair } from '@/services/cryptoIdentity';
 import { chatQueue } from '@/services/chatQueue';
 
 const USER_KEY = 'secretspace.user';
@@ -119,6 +119,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.warn('[Auth] push init failed', err);
     });
   }, [user?.id, notificationsEnabled]);
+
+  // Eagerly start RSA keygen the moment the user authenticates. Pure-JS keygen takes
+  // 15-30s on mid-tier Android — if we wait until they open chat, that's where they
+  // notice the wait. By kicking it off here, the work overlaps with them browsing
+  // Home/Settings/Diary and chat is typically ready by the time they tap it.
+  // Fire-and-forget; getOrCreateKeyPair has internal in-flight deduping so this won't
+  // race with the chat screen's own call.
+  const cryptoInitForUserRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!user?.id) return;
+    if (cryptoInitForUserRef.current === user.id) return;
+    cryptoInitForUserRef.current = user.id;
+    getOrCreateKeyPair().catch((err) => {
+      console.warn('[Auth] background keygen failed', err);
+    });
+  }, [user?.id]);
 
   // Re-arm push on app foreground. iOS occasionally rotates the APNs device token, and
   // Android can revoke permission while we're backgrounded — re-running init is cheap.

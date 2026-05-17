@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -14,6 +14,7 @@ export function LoveBotScreen() {
   const navigation = useNavigation<any>();
   const [settings, setSettings] = useState<LoveBotSettings | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
 
   const formatTime = (hhmm: string | undefined) => {
     if (!hhmm) return '9:30 AM';
@@ -78,7 +79,12 @@ export function LoveBotScreen() {
 
   return (
     <ScreenContainer scroll={false}>
-      <TopBar showBack={false} leadingElement={<View style={{ width: 40 }} />} title="Love Bot" rightActions={[{ icon: 'info', onPress: () => {} }]} />
+      <TopBar
+        showBack={false}
+        leadingElement={<View style={{ width: 40 }} />}
+        title="Love Bot"
+        rightActions={[{ icon: 'info', onPress: () => setInfoOpen(true) }]}
+      />
       <ScrollView
         contentContainerStyle={{
           paddingHorizontal: theme.screenPadding,
@@ -270,7 +276,109 @@ export function LoveBotScreen() {
           </View>
         </Card>
       </ScrollView>
+
+      {/* Info modal — explains the Love Bot to first-time users. Tapped from the
+          (i) button in the TopBar. Bottom-sheet style keeps it lightweight and
+          dismissable with a tap on the scrim. */}
+      <Modal
+        visible={infoOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setInfoOpen(false)}
+      >
+        <Pressable style={styles.infoScrim} onPress={() => setInfoOpen(false)}>
+          <Pressable
+            onPress={() => {}}
+            style={[styles.infoSheet, { backgroundColor: theme.colors.surface }]}
+          >
+            <View style={[styles.infoHandle, { backgroundColor: theme.colors.hairlineStrong }]} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+              <LinearGradient
+                colors={theme.gradientStops as unknown as readonly [string, string]}
+                style={styles.infoIcon}
+              >
+                <Feather name="message-circle" size={18} color="#fff" />
+              </LinearGradient>
+              <Text variant="h3" style={{ marginLeft: 12, flex: 1 }}>
+                How Love Bot works
+              </Text>
+            </View>
+            <Text variant="bodySmall" color="muted" style={{ marginBottom: 20 }}>
+              A gentle little nudge that sends your partner one of the reasons you love
+              them — automatically, without you ever forgetting.
+            </Text>
+
+            <InfoRow
+              icon="clock"
+              title="Daily mode"
+              body="One reason is delivered at the same time every day. Predictable, dependable, like a morning coffee for the heart."
+            />
+            <InfoRow
+              icon="star"
+              title="Surprise mode"
+              body="Random delivery throughout the week — never know when, but always when it's needed."
+            />
+            <InfoRow
+              icon="users"
+              title="Both can contribute"
+              body="Toggle 'Let them add reasons too' and your partner can drop their own reasons into the queue — a private collaboration."
+            />
+            <InfoRow
+              icon="bell"
+              title="How it's delivered"
+              body="Each reason arrives as a push notification on your partner's phone, and shows on their Home screen for the day."
+              last
+            />
+
+            <Button
+              label="Got it"
+              fullWidth
+              style={{ marginTop: 24 }}
+              onPress={() => setInfoOpen(false)}
+            />
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ScreenContainer>
+  );
+}
+
+function InfoRow({
+  icon,
+  title,
+  body,
+  last,
+}: {
+  icon: keyof typeof Feather.glyphMap;
+  title: string;
+  body: string;
+  last?: boolean;
+}) {
+  const theme = useTheme();
+  return (
+    <View
+      style={[
+        styles.infoRow,
+        !last && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.hairline },
+      ]}
+    >
+      <View
+        style={[
+          styles.infoRowIcon,
+          { backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.hairline },
+        ]}
+      >
+        <Feather name={icon} size={16} color={theme.colors.foreground} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text variant="bodyMedium" weight="semibold">
+          {title}
+        </Text>
+        <Text variant="bodySmall" color="muted" style={{ marginTop: 4 }}>
+          {body}
+        </Text>
+      </View>
+    </View>
   );
 }
 
@@ -326,4 +434,34 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   appIcon: { width: 28, height: 28, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
+  infoScrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' },
+  infoSheet: {
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    paddingBottom: 32,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+  },
+  infoHandle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, marginVertical: 12 },
+  infoIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 14,
+  },
+  infoRowIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+  },
 });

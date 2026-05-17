@@ -32,6 +32,14 @@ export type DiaryChangeEvent =
 
 type DiaryListener = (e: DiaryChangeEvent) => void;
 
+export type CouponChangeEvent =
+  | { action: 'created'; couponId: string }
+  | { action: 'status'; couponId: string; status: string }
+  | { action: 'fulfilled'; couponId: string }
+  | { action: 'reviewed'; couponId: string };
+
+type CouponListener = (e: CouponChangeEvent) => void;
+
 interface ChatSocketCtx {
   socket: Socket | null;
   status: ConnectionStatus;
@@ -40,6 +48,8 @@ interface ChatSocketCtx {
   resetUnread: () => void;
   // Subscribe to live diary-feed mutations. Returns an unsubscribe fn for cleanup.
   subscribeDiary: (fn: DiaryListener) => () => void;
+  // Subscribe to coupon lifecycle changes (created, status, fulfilled, reviewed).
+  subscribeCoupons: (fn: CouponListener) => () => void;
 }
 
 const Context = createContext<ChatSocketCtx | null>(null);
@@ -66,6 +76,16 @@ export function ChatSocketProvider({ children }: { children: React.ReactNode }) 
     diaryListenersRef.current.add(fn);
     return () => {
       diaryListenersRef.current.delete(fn);
+    };
+  }, []);
+
+  // Coupon listeners — same fan-out pattern. CouponsList + CouponDetail both mount
+  // sometimes (list under list-stack, detail pushed on top) and both want updates.
+  const couponListenersRef = useRef<Set<CouponListener>>(new Set());
+  const subscribeCoupons = useCallback((fn: CouponListener) => {
+    couponListenersRef.current.add(fn);
+    return () => {
+      couponListenersRef.current.delete(fn);
     };
   }, []);
 
@@ -105,7 +125,11 @@ export function ChatSocketProvider({ children }: { children: React.ReactNode }) 
     setStatus('connecting');
     const s = io(socketUrl, {
       auth: { token },
-      transports: ['websocket'],
+      // Order matters: try websocket first (fast), fall back to long-polling if the
+      // WS upgrade fails. Tunneled connections (ngrok, dev tunnels) occasionally fail
+      // the WS handshake on the first hop; polling keeps the chat working until the
+      // socket can upgrade.
+      transports: ['websocket', 'polling'],
       // socket.io defaults already enable reconnection; we make them explicit and tune
       // backoff for mobile networks that flap (cell ↔ wifi handoff).
       reconnection: true,
@@ -148,6 +172,19 @@ export function ChatSocketProvider({ children }: { children: React.ReactNode }) 
           fn(e);
         } catch (err) {
           if (__DEV__) console.log('[ChatSocket] diary listener threw', err);
+        }
+      });
+    });
+
+    // Coupon lifecycle — created / status flip / fulfilled / reviewed. Fired to both
+    // partners' connected sockets so the list reflects the partner's redemption in
+    // real time, no manual pull-to-refresh needed.
+    s.on('coupon_changed', (e: CouponChangeEvent) => {
+      couponListenersRef.current.forEach((fn) => {
+        try {
+          fn(e);
+        } catch (err) {
+          if (__DEV__) console.log('[ChatSocket] coupon listener threw', err);
         }
       });
     });
@@ -203,11 +240,12 @@ export function ChatSocketProvider({ children }: { children: React.ReactNode }) 
       unreadCount,
       resetUnread,
       subscribeDiary,
+      subscribeCoupons,
     }),
     // socketRef.current isn't in deps because it's a ref; consumers needing a fresh
     // socket can read it via the hook and the status state will force re-renders when
     // the connection establishes or drops.
-    [status, partnerOnline, unreadCount, resetUnread, subscribeDiary]
+    [status, partnerOnline, unreadCount, resetUnread, subscribeDiary, subscribeCoupons]
   );
 
   return <Context.Provider value={value}>{children}</Context.Provider>;

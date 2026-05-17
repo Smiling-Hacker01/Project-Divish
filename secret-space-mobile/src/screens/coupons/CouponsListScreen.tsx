@@ -8,6 +8,7 @@ import { useTheme } from '@/theme';
 import { couponsApi } from '@/api';
 import { Coupon, CouponStatus } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
+import { useChatSocket } from '@/context/ChatSocketContext';
 
 type Tab = 'received' | 'given' | 'fulfill';
 
@@ -15,6 +16,7 @@ export function CouponsListScreen() {
   const theme = useTheme();
   const navigation = useNavigation<any>();
   const { user } = useAuth();
+  const { subscribeCoupons } = useChatSocket();
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [tab, setTab] = useState<Tab>('received');
   const [refreshing, setRefreshing] = useState(false);
@@ -37,6 +39,15 @@ export function CouponsListScreen() {
       fetch();
     }, [fetch])
   );
+
+  // Realtime: when the partner creates/redeems/approves/fulfills a coupon, refetch so
+  // both sides see the up-to-date status without manual pull-to-refresh.
+  useEffect(() => {
+    const unsub = subscribeCoupons(() => {
+      fetch();
+    });
+    return unsub;
+  }, [subscribeCoupons, fetch]);
 
   const filtered = useMemo(() => {
     if (tab === 'received') return coupons.filter((c) => c.recipient === 'you');
@@ -139,7 +150,7 @@ export function CouponCard({ coupon, onPress }: { coupon: Coupon; onPress: () =>
         <View style={[styles.notch, styles.notchRight, { backgroundColor: theme.colors.background }]} />
 
         <View style={{ paddingHorizontal: 20, paddingTop: 18 }}>
-          <View style={{ flexDirection: 'row' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
             <View style={{ flex: 1, paddingRight: 12 }}>
               <Text variant="h3" style={{ fontSize: 22 }} numberOfLines={1}>
                 {coupon.title}
@@ -148,7 +159,13 @@ export function CouponCard({ coupon, onPress }: { coupon: Coupon; onPress: () =>
                 {coupon.description}
               </Text>
             </View>
-            <Chip label={coupon.status} tone={statusToTone[coupon.status]} size="sm" />
+            {/* Chip sits at the top-right of the card. flexShrink: 0 keeps the
+                pill from being squeezed by a long title; alignItems on the parent
+                pins it to the top edge rather than vertically centering against
+                the multi-line description. */}
+            <View style={{ flexShrink: 0 }}>
+              <Chip label={coupon.status} tone={statusToTone[coupon.status]} size="sm" />
+            </View>
           </View>
         </View>
 
@@ -158,29 +175,56 @@ export function CouponCard({ coupon, onPress }: { coupon: Coupon; onPress: () =>
           ))}
         </View>
 
+        {/* Two-region footer: identity on the left (avatar + name), metadata on the
+            right (expiry chip). The name truncates with ellipsis if it's long; the
+            chip has `flexShrink: 0` so the date is never cut off. */}
         <View style={[styles.couponFooter, { paddingHorizontal: 20 }]}>
-          <Avatar
-            uri={
-              coupon.creator === 'you'
-                ? user?.avatarUrl ?? null
-                : user?.partnerAvatar ?? null
-            }
-            name={coupon.creator === 'you' ? user?.name ?? 'You' : user?.partnerName ?? 'Partner'}
-            size={24}
-            ring={coupon.creator === 'you' ? 'rose' : 'gold'}
-          />
-          <Text variant="caption" color="muted" style={{ marginLeft: 8 }}>
-            From {coupon.creator === 'you' ? 'you' : user?.partnerName ?? 'partner'}
-          </Text>
-          <View style={{ flex: 1 }} />
+          <View style={styles.couponFooterIdentity}>
+            <Avatar
+              uri={
+                coupon.creator === 'you'
+                  ? user?.avatarUrl ?? null
+                  : user?.partnerAvatar ?? null
+              }
+              name={coupon.creator === 'you' ? user?.name ?? 'You' : user?.partnerName ?? 'Partner'}
+              size={24}
+              ring={coupon.creator === 'you' ? 'rose' : 'gold'}
+            />
+            <Text
+              variant="caption"
+              color="muted"
+              numberOfLines={1}
+              style={{ marginLeft: 8, flex: 1 }}
+            >
+              From {coupon.creator === 'you' ? 'you' : user?.partnerName ?? 'partner'}
+            </Text>
+          </View>
           {coupon.expiry && (
-            <Chip label={`Expires ${new Date(coupon.expiry).toLocaleDateString()}`} tone="muted" size="sm" />
+            <View style={{ flexShrink: 0, marginLeft: 8 }}>
+              <Chip
+                label={`Expires ${new Date(coupon.expiry).toLocaleDateString()}`}
+                tone="muted"
+                size="sm"
+              />
+            </View>
           )}
         </View>
 
         {redeemed && (
           <View style={styles.stamp} pointerEvents="none">
-            <Text style={[styles.stampText, { color: 'rgba(232,99,122,0.7)' }]}>REDEEMED</Text>
+            <View
+              style={[
+                styles.stampPill,
+                {
+                  borderColor: 'rgba(232,99,122,0.55)',
+                  backgroundColor: 'rgba(232,99,122,0.10)',
+                },
+              ]}
+            >
+              <Text style={[styles.stampText, { color: 'rgba(232,99,122,0.85)' }]}>
+                REDEEMED
+              </Text>
+            </View>
           </View>
         )}
       </View>
@@ -215,15 +259,28 @@ const styles = StyleSheet.create({
   notchRight: { right: -10 },
   dashRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 18, gap: 4 },
   couponFooter: { flexDirection: 'row', alignItems: 'center' },
+  // The identity sub-row gets flex:1 so its name can truncate while the expiry chip
+  // (in a flexShrink:0 sibling) stays at its natural width on the right.
+  couponFooterIdentity: { flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 },
+  // The old stamp was a giant diagonal banner across the whole card — over-
+  // designed and clashed with the title/description. Now a compact angled pill
+  // pinned to the bottom-right corner; reads clearly without dominating.
   stamp: {
     position: 'absolute',
-    top: '40%',
-    left: '20%',
-    transform: [{ rotate: '-12deg' }],
+    bottom: 10,
+    right: 14,
+    transform: [{ rotate: '-8deg' }],
+  },
+  stampPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
   },
   stampText: {
-    fontSize: 36,
-    fontWeight: '900',
-    letterSpacing: 4,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.5,
   },
 });
