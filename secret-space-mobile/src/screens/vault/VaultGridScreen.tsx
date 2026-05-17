@@ -434,7 +434,13 @@ export function VaultGridScreen() {
         </Pressable>
       )}
 
-      {/* Permanent-failure pending banner — entries the worker gave up on */}
+      {/* Permanent-failure banner. The user can retry all (one more attempt per
+          failed entry) or dismiss to clear the queue and reset the failure count —
+          dismissal asks for confirmation since it's destructive (the local file
+          references are dropped; user has to re-pick from the picker to upload
+          again). The × icon is the explicit dismiss affordance — previously this
+          banner had only "Retry all" with no way to close it, leaving users stuck
+          when the underlying error wasn't recoverable. */}
       {uploadState.failed > 0 && (
         <View
           style={[
@@ -443,7 +449,7 @@ export function VaultGridScreen() {
           ]}
         >
           <Feather name="alert-circle" size={14} color={theme.colors.destructive} />
-          <Text variant="bodySmall" style={{ marginLeft: 10, flex: 1 }}>
+          <Text variant="bodySmall" style={{ marginLeft: 10, flex: 1 }} numberOfLines={1}>
             {uploadState.failed} {uploadState.failed === 1 ? 'upload' : 'uploads'} failed
           </Text>
           <Pressable
@@ -456,10 +462,33 @@ export function VaultGridScreen() {
               }
             }}
             hitSlop={8}
+            style={{ marginRight: 12 }}
           >
             <Text variant="bodySmall" color="primary" weight="semibold">
               Retry all
             </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              Alert.alert(
+                'Dismiss failed uploads?',
+                "We'll clear them from the queue. You can re-pick them from your library to try again.",
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Dismiss',
+                    style: 'destructive',
+                    onPress: () => {
+                      void vaultUploadManager.discardAllFailed();
+                    },
+                  },
+                ]
+              );
+            }}
+            hitSlop={8}
+            style={[styles.dismissBtn, { borderColor: theme.colors.hairlineStrong }]}
+          >
+            <Feather name="x" size={14} color={theme.colors.muted} />
           </Pressable>
         </View>
       )}
@@ -761,4 +790,12 @@ const styles = StyleSheet.create({
   lightboxImage: { flex: 1, width: SCREEN_WIDTH },
   lightboxBar: { margin: 16, marginBottom: 32 },
   lightboxAction: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  dismissBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

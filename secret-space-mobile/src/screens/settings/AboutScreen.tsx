@@ -97,36 +97,46 @@ export function AboutScreen() {
             />
 
             <Text variant="overline" color="muted" style={{ marginBottom: 12 }}>
-              A note from the maker
+              A note from Vishal
             </Text>
 
             <Letter>
-              This started as a birthday gift.
+              This started as a birthday gift for Disha — my love.
             </Letter>
             <Letter>
-              I built it for Disha — my love — because the apps we already use felt too
-              loud, too public, too crowded for what we actually wanted: a quiet place
-              that's just ours.
+              The apps we already use felt too loud, too public, too crowded for what
+              we actually wanted: a quiet place that was just ours.
             </Letter>
             <Letter>
-              A space to write things we'll forget. To send little messages on autopilot
+              A space to write things we'd forget. To send little messages on autopilot
               when life gets busy. To save the photos we'd never post anywhere else.
               To remember why we chose each other in the first place, on the days that
               feel hard.
             </Letter>
             <Letter>
-              It worked for us. So we made it open — not to scale or grow or trend, but
-              so anyone who wants a small private space with the person they love can
-              have one too.
+              It became home for us. Maybe it can become home for you too — for whoever
+              you love, however quietly.
             </Letter>
             <Letter last>
               Use it gently. Make it yours.
             </Letter>
 
+            {/* Two-line signature: attribution on the first line with a heart, the
+                "shared with you" sits a step below as a quieter footnote — keeps the
+                attribution and the dedication visually distinct. */}
             <View style={styles.signature}>
-              <Feather name="heart" size={14} color={theme.colors.primary} />
-              <Text variant="caption" color="muted" style={{ marginLeft: 8 }}>
-                Made for Disha · Shared with you
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Feather name="heart" size={14} color={theme.colors.primary} />
+                <Text variant="caption" color="muted" style={{ marginLeft: 8 }}>
+                  Built by Vishal · For Disha
+                </Text>
+              </View>
+              <Text
+                variant="caption"
+                color="muted"
+                style={{ marginTop: 6, opacity: 0.7 }}
+              >
+                Shared with you
               </Text>
             </View>
           </View>
@@ -159,9 +169,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   signature: {
-    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingTop: 12,
+    paddingTop: 16,
   },
 });
