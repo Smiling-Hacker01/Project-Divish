@@ -124,10 +124,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   }, [user?.id, notificationsEnabled]);
 
-  // Warm up the user's keypair as soon as they authenticate. With react-native-quick-
-  // crypto this is ~80–150ms native work (was 15–30s with pure-JS forge), so it's not
-  // a UX-critical pre-fetch anymore — but doing it here keeps cryptoReady=true by the
-  // time the chat screen mounts, avoiding even a momentary banner flash for new users.
+  // Eagerly start RSA keygen the moment the user authenticates. Pure-JS keygen takes
+  // 15-30s on mid-tier Android — if we wait until they open chat, that's where they
+  // notice the wait. By kicking it off here, the work overlaps with them browsing
+  // Home/Settings/Diary and chat is typically ready by the time they tap it.
   // Fire-and-forget; getOrCreateKeyPair has internal in-flight deduping so this won't
   // race with the chat screen's own call.
   const cryptoInitForUserRef = useRef<string | null>(null);
