@@ -14,6 +14,16 @@ export const apiClient: AxiosInstance = axios.create({
   timeout: 20000,
 });
 
+// Fire-and-forget warmup against the unauthenticated /health endpoint. Render's free
+// (and Starter) tiers spin a cold instance back up on first hit; calling this during
+// app bootstrap lets the backend wake while the splash is showing rather than while
+// the user is staring at a hung chat screen. Errors are deliberately swallowed —
+// this is purely a perf nudge, never a precondition for anything.
+export const prewarmBackend = (): void => {
+  const healthUrl = baseURL.replace(/\/api\/?$/, '') + '/health';
+  fetch(healthUrl).catch(() => undefined);
+};
+
 let logoutHandler: (() => void) | null = null;
 export const setLogoutHandler = (fn: () => void) => {
   logoutHandler = fn;

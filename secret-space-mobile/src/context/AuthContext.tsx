@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { authApi, settingsApi, setLogoutHandler, tokens } from '@/api';
+import { authApi, prewarmBackend, settingsApi, setLogoutHandler, tokens } from '@/api';
 import { User } from '@/types/api';
 import {
   initPushNotifications,
@@ -89,6 +89,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // Kick the backend awake in parallel with session restore. If the dyno is cold,
+    // it gets the ~30s spin-up window while the splash is showing instead of while
+    // the user is waiting on /me or the chat socket.
+    prewarmBackend();
     (async () => {
       try {
         const [storedUser, accessToken, notifPref] = await Promise.all([
@@ -120,10 +124,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   }, [user?.id, notificationsEnabled]);
 
-  // Eagerly start RSA keygen the moment the user authenticates. Pure-JS keygen takes
-  // 15-30s on mid-tier Android — if we wait until they open chat, that's where they
-  // notice the wait. By kicking it off here, the work overlaps with them browsing
-  // Home/Settings/Diary and chat is typically ready by the time they tap it.
+  // Warm up the user's keypair as soon as they authenticate. With react-native-quick-
+  // crypto this is ~80–150ms native work (was 15–30s with pure-JS forge), so it's not
+  // a UX-critical pre-fetch anymore — but doing it here keeps cryptoReady=true by the
+  // time the chat screen mounts, avoiding even a momentary banner flash for new users.
   // Fire-and-forget; getOrCreateKeyPair has internal in-flight deduping so this won't
   // race with the chat screen's own call.
   const cryptoInitForUserRef = useRef<string | null>(null);
