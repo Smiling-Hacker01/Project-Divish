@@ -297,7 +297,7 @@ export function LoginScreen({ navigation }: Props) {
                 )}
               </View>
 
-              <View style={{ marginTop: 'auto', paddingBottom: 24 }}>
+              <View style={{ marginTop: 32, paddingBottom: 24 }}>
                 <Button label="Continue" fullWidth onPress={submitEmail} disabled={!email.trim()} />
                 <Pressable
                   onPress={() => navigation.navigate('Splash' as never)}
@@ -386,7 +386,7 @@ export function LoginScreen({ navigation }: Props) {
                 )}
               </View>
 
-              <View style={{ marginTop: 'auto', paddingBottom: 24 }}>
+              <View style={{ marginTop: 32, paddingBottom: 24 }}>
                 <Button
                   label={mode === 'face-password' ? 'Continue to face scan' : 'Login'}
                   fullWidth
@@ -544,7 +544,7 @@ export function LoginScreen({ navigation }: Props) {
                 )}
               </View>
 
-              <View style={{ marginTop: 'auto', paddingBottom: 24 }}>
+              <View style={{ marginTop: 32, paddingBottom: 24 }}>
                 <Button
                   label="Verify OTP"
                   fullWidth
