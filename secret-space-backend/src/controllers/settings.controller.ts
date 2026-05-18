@@ -7,6 +7,7 @@ import { updateProfileSchema } from '../utils/validators';
 import { uploadBuffer, deleteFile } from '../services/storage.service';
 import { generateOtp, OTP_EXPIRY_MINUTES, sendOtpEmail } from '../utils/otp';
 import { extractDescriptor } from '../services/face.service';
+import { sendPush } from '../services/notification.service';
 import { io } from '../websockets/chat.gateway';
 
 const BCRYPT_SALT_ROUNDS = 12;
@@ -93,23 +94,127 @@ export const updateProfile = async (req: Request, res: Response, next: NextFunct
   }
 };
 
-// ── POST /api/settings/unlink ──────────────────────────────────────────────────
-// Only creator (User A) can unlink partner
-export const unlinkPartner = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+// ── POST /api/settings/leave-space ─────────────────────────────────────────────
+// Destructive — only the space *creator* (User A) can dissolve the shared space.
+//
+// What this does, in order:
+//   1. Authorize. User B gets a 403 with a partner-facing message.
+//   2. Collect every Cloudinary URL we own on this couple — couple photo, all
+//      chat-message media, all diary media+thumbnails — so we can clean them up
+//      after the DB row is gone. (Vault files are owner-scoped, not couple-scoped,
+//      so they survive the dissolution — each user keeps their own vault.)
+//   3. Look up the partner's id (if any) and the creator's name for the push body.
+//   4. Emit `space_dissolved` to the couple room BEFORE the delete so the partner's
+//      live socket sees it while the room still exists.
+//   5. `prisma.couple.delete` — Prisma cascades to Message, DiaryEntry (and its
+//      DiaryReaction children), Mood, Coupon, LoveReason. One transaction, all-or-
+//      nothing — partial state is impossible.
+//   6. Fire-and-forget cleanup of Cloudinary assets, LoveBot dedup Redis keys, and
+//      a push notification to the partner. None of these block the response — the
+//      user's request returns the moment the DB row is gone.
+export const leaveSpace = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     if (!req.isCreator) {
-      res.status(403).json({ error: 'Only the couple creator can unlink a partner' });
+      res.status(403).json({
+        error: 'Only the space creator can close this space. Ask your partner to do it.',
+      });
       return;
     }
 
     const coupleId = req.coupleId!;
+    const userId = req.user!.userId;
 
-    await prisma.couple.update({
+    // Single query collects everything we need before the cascade nukes it.
+    const couple = await prisma.couple.findUnique({
       where: { id: coupleId },
-      data: { userBId: null, status: 'waiting' },
+      select: {
+        userAId: true,
+        userBId: true,
+        couplePhoto: true,
+        userA: { select: { name: true } },
+        messages: { select: { mediaUrl: true } },
+        diaryEntries: { select: { mediaUrl: true, thumbnailUrl: true } },
+      },
     });
 
-    res.json({ success: true });
+    if (!couple) {
+      res.status(404).json({ error: 'Space not found.' });
+      return;
+    }
+
+    const partnerId = couple.userBId ?? undefined;
+    const creatorName = couple.userA?.name ?? 'Your partner';
+
+    // Collect Cloudinary URLs to delete after the DB commit. We do this *before*
+    // the delete because cascade wipes the rows we'd read from.
+    const cloudinaryUrls: string[] = [];
+    if (couple.couplePhoto) cloudinaryUrls.push(couple.couplePhoto);
+    for (const m of couple.messages) if (m.mediaUrl) cloudinaryUrls.push(m.mediaUrl);
+    for (const d of couple.diaryEntries) {
+      if (d.mediaUrl) cloudinaryUrls.push(d.mediaUrl);
+      if (d.thumbnailUrl) cloudinaryUrls.push(d.thumbnailUrl);
+    }
+
+    // Notify the room *before* the delete so the partner's connected socket sees
+    // the event while it still has membership. After delete the room ID is still
+    // valid for emitting but partner-side handlers will use it as a signal to
+    // tear down and navigate away.
+    try {
+      io?.to(coupleId).emit('space_dissolved', { coupleId, dissolvedBy: userId });
+    } catch (err: any) {
+      logger.warn({ err: err.message, coupleId }, '[LeaveSpace] socket emit failed (non-fatal)');
+    }
+
+    await prisma.couple.delete({ where: { id: coupleId } });
+
+    logger.info(
+      { coupleId, userId, partnerId, mediaCount: cloudinaryUrls.length },
+      '[LeaveSpace] Space dissolved'
+    );
+
+    // ── Fire-and-forget cleanup. None of these affect the response or each other.
+    // Cloudinary: best-effort delete. Failures leave orphan media — a cost concern,
+    // not a correctness one. We log + move on.
+    void (async () => {
+      for (const url of cloudinaryUrls) {
+        const publicId = publicIdFromCloudinaryUrl(url);
+        if (!publicId) continue;
+        try {
+          await deleteFile(publicId);
+        } catch (err: any) {
+          logger.warn(
+            { err: err.message, publicId },
+            '[LeaveSpace] Cloudinary cleanup failed (non-fatal)'
+          );
+        }
+      }
+    })();
+
+    // Push to partner so they don't open the app to a silently broken state.
+    if (partnerId) {
+      sendPush(
+        partnerId,
+        'Your shared space has been closed',
+        `${creatorName} has left the space.`,
+        { type: 'space_dissolved' }
+      ).catch((err: any) =>
+        logger.warn({ err: err.message, partnerId }, '[LeaveSpace] push failed (non-fatal)')
+      );
+    }
+
+    // Drop LoveBot dedup keys for this couple so the room ID can be reused cleanly
+    // if a future couple happens to land on the same ID (UUID collision: not in this
+    // universe, but the hygiene is free).
+    void (async () => {
+      try {
+        const keys = await redis.keys(`lovebot:sent:${coupleId}:*`);
+        if (keys.length > 0) await redis.del(...keys);
+      } catch (err: any) {
+        logger.warn({ err: err.message }, '[LeaveSpace] Redis cleanup failed (non-fatal)');
+      }
+    })();
+
+    res.json({ success: true, message: 'Space dissolved.' });
   } catch (err) {
     next(err);
   }

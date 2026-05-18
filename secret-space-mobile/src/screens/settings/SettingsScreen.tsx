@@ -56,6 +56,53 @@ export function SettingsScreen() {
     setTimeout(() => navigation.navigate('FaceReenroll'), 250);
   };
 
+  // Two-step confirmation for "Leave the space" — irreversible, deletes every
+  // shared row (chats, diary, coupons, love reasons) for both users. We hit it
+  // twice on purpose so a stray tap doesn't drop everything; iOS-style destructive
+  // styling on the final button makes the irreversibility visible. After success
+  // the user gets logged out — the simplest navigation reset, since every
+  // requireCouple-protected route would now 403 for them.
+  const onLeaveSpacePress = () => {
+    Alert.alert(
+      'Close this space?',
+      'This permanently deletes all your shared chats, diary entries, coupons, and love notes. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Continue',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Are you absolutely sure?',
+              `${user?.partnerName ?? 'Your partner'} will be notified. They'll keep their account but lose all shared data.`,
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Close space',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => undefined);
+                      await settingsApi.leaveSpace();
+                      // logout() already clears chatQueue, diaryQueue, the RSA keypair,
+                      // and unregisters push — exactly the post-leave cleanup we want.
+                      await logout();
+                    } catch (e: any) {
+                      Alert.alert(
+                        'Could not close the space',
+                        e?.response?.data?.error ?? 'Please try again in a moment.'
+                      );
+                    }
+                  },
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
+  };
+
   const disableFace = () => {
     setFaceSheetOpen(false);
     Alert.alert(
@@ -130,17 +177,9 @@ export function SettingsScreen() {
             title="Couple code"
             trailing={<CouplePill code={user?.coupleCode ?? null} />}
           />
-          {/* Only the couple creator can actually unlink — the joining partner sees
-              the row but it's inert. */}
-          {user?.partnerName && (
-            <SettingsRow
-              title="Unlink partner"
-              subtitle={user?.isCreator ? undefined : 'Only the partner who created this space can unlink.'}
-              titleColor="destructive"
-              disabled={!user?.isCreator}
-              onPress={user?.isCreator ? () => settingsApi.unlinkPartner() : undefined}
-            />
-          )}
+          {/* The destructive action lives under Account → "Leave the space" — single
+              source of truth, double-confirm. Avoids two destructive rows that do
+              almost-the-same-thing in different sections. */}
         </SettingsSection>
 
         <SettingsSection label="Anniversary">
@@ -215,7 +254,17 @@ export function SettingsScreen() {
 
         <SettingsSection label="Account">
           <SettingsRow title="Log out" titleColor="muted" onPress={logout} />
-          <SettingsRow title="Leave the space" titleColor="destructive" onPress={() => {}} />
+          <SettingsRow
+            title="Leave the space"
+            subtitle={
+              user?.isCreator
+                ? undefined
+                : 'Only your partner can close this space.'
+            }
+            titleColor="destructive"
+            disabled={!user?.isCreator}
+            onPress={user?.isCreator ? onLeaveSpacePress : undefined}
+          />
         </SettingsSection>
       </View>
 
