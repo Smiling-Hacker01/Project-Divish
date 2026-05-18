@@ -11,6 +11,7 @@ import {
   verifyRefreshToken,
 } from '../utils/jwt';
 import { generateCoupleCode } from '../utils/coupleCode';
+import { getPopulatedUser } from '../utils/userPopulator';
 import { extractDescriptor, verifyFace } from '../services/face.service';
 import { generateOtp, OTP_EXPIRY_MINUTES, sendOtpEmail } from '../utils/otp';
 import {
@@ -42,39 +43,9 @@ const generateUniqueCoupleCode = async (): Promise<string> => {
   throw new Error('Failed to generate a unique couple code after retries');
 };
 
-// ── Helper: Populate full User object for frontend AuthContext ─────────────────
-const getPopulatedUser = async (userId: string) => {
-  const account = await prisma.user.findUnique({ where: { id: userId } });
-  if (!account) throw new Error('User not found');
-
-  const couple = await prisma.couple.findFirst({
-    where: { OR: [{ userAId: userId }, { userBId: userId }] }
-  });
-
-  const isCreator = couple?.userAId === userId;
-  const partnerId = isCreator ? couple?.userBId : couple?.userAId;
-  let partnerName: string | undefined;
-
-  if (partnerId) {
-    const p = await prisma.user.findUnique({ where: { id: partnerId }, select: { name: true } });
-    if (p) partnerName = p.name;
-  }
-
-  const hasFace = !!(await prisma.faceDescriptor.findUnique({ where: { userId } }));
-
-  return {
-    id: account.id,
-    name: account.name,
-    email: account.email,
-    coupleCode: couple?.coupleCode,
-    isCreator,
-    partnerId,
-    partnerName,
-    faceMFAEnabled: hasFace,
-    anniversaryDate: couple?.anniversaryDate?.toISOString().split('T')[0],
-    coupleStatus: couple?.status
-  };
-};
+// `getPopulatedUser` lives in `utils/userPopulator.ts` so settings.controller's
+// /profile endpoint can serve the same shape (otherwise a refresh would silently
+// drop fields like isCreator that the mobile UI depends on).
 
 // ── POST /api/auth/signup ──────────────────────────────────────────────────────
 export const signup = async (req: Request, res: Response, next: NextFunction): Promise<void> => {

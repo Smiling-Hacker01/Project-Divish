@@ -7,8 +7,13 @@ export const settingsApi = {
     (await apiClient.put<{ success: boolean; user: User }>('/settings/profile', body)).data,
   registerFcm: async (token: string | null) =>
     (await apiClient.put<{ success: boolean }>('/settings/fcm-token', { token })).data,
-  unlinkPartner: async () =>
-    (await apiClient.post<{ success: boolean }>('/settings/unlink', {})).data,
+  // Destructive — dissolves the shared space (creator only). Cascades to chat,
+  // diary, moods, coupons, love reasons on the server; user accounts and per-user
+  // vault files survive. After a 200 response the local client must clear couple-
+  // scoped caches (chatQueue, diaryQueue) and let navigation reset to the unauthed
+  // CoupleCodeScreen since requireCouple-protected endpoints will now 403.
+  leaveSpace: async () =>
+    (await apiClient.post<{ success: boolean; message?: string }>('/settings/leave-space', {})).data,
   deleteAvatar: async () =>
     (await apiClient.delete<{ success: boolean }>('/settings/avatar')).data,
   // Face MFA — disable or re-enroll while authenticated. Signup-time enrollment
