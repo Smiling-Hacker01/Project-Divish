@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts as useFraunces, Fraunces_400Regular, Fraunces_500Medium } from '@expo-google-fonts/fraunces';
 import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold } from '@expo-google-fonts/inter';
@@ -37,7 +37,10 @@ export default function App() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }} onLayout={onLayout}>
-      <SafeAreaProvider>
+      {/* `initialMetrics` makes the very first render use real native-measured insets
+          instead of zeros, preventing the broken first-frame where the TopBar would
+          overlap the status bar before the async inset measurement arrived. */}
+      <SafeAreaProvider initialMetrics={initialWindowMetrics}>
         <ThemeProvider>
           <AuthProvider>
             <ChatSocketProvider>
