@@ -4,7 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { ScreenContainer, TopBar, Text, Button } from '@/components';
+import { ScreenContainer, InlineHeader, Text, Button } from '@/components';
 import { useTheme } from '@/theme';
 import { settingsApi } from '@/api';
 import { useAuth } from '@/context/AuthContext';
@@ -89,7 +89,7 @@ export function FaceReenrollScreen() {
 
   return (
     <ScreenContainer glowCorner="top-right">
-      <TopBar title="Re-enroll Face ID" />
+      <InlineHeader title="Re-enroll Face ID" showBack />
       <View style={[styles.wrap, { paddingHorizontal: theme.screenPadding }]}>
         <View style={styles.frameWrap}>
           <Animated.View

@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { ScreenContainer, TopBar, Text, Button, Input, OTPInput } from '@/components';
+import { ScreenContainer, InlineHeader, Text, Button, Input, OTPInput } from '@/components';
 import { useTheme } from '@/theme';
 import { settingsApi } from '@/api';
 
@@ -74,13 +74,22 @@ export function ChangePasswordScreen() {
   };
 
   return (
-    <ScreenContainer scroll>
-      <TopBar title="Change password" />
+    <ScreenContainer scroll={false}>
+      <InlineHeader title="Change password" showBack />
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <View style={{ paddingHorizontal: theme.screenPadding, paddingTop: 16, paddingBottom: 32 }}>
+        <ScrollView
+          contentContainerStyle={{
+            paddingHorizontal: theme.screenPadding,
+            paddingTop: 16,
+            paddingBottom: 48,
+            flexGrow: 1,
+          }}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
           {stage === 'enter' && (
             <View>
               <Text variant="bodySmall" color="muted" style={{ marginBottom: 24 }}>
@@ -195,7 +204,7 @@ export function ChangePasswordScreen() {
               />
             </View>
           )}
-        </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </ScreenContainer>
   );

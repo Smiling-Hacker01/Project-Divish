@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Feather } from '@expo/vector-icons';
-import { ScreenContainer, TopBar, Text, Input, Button, ProgressBar, SwitchRow } from '@/components';
+import { ScreenContainer, InlineHeader, Text, Input, Button, ProgressBar, SwitchRow } from '@/components';
 import { useTheme } from '@/theme';
 import { AuthStackParamList } from '@/navigation/types';
 import { authApi } from '@/api';
@@ -53,7 +53,7 @@ export function SignUpScreen({ navigation }: Props) {
 
   return (
     <ScreenContainer scroll={false}>
-      <TopBar centerElement={<ProgressBar total={3} current={1} />} />
+      <InlineHeader showBack centerElement={<ProgressBar total={3} current={1} />} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView
           keyboardShouldPersistTaps="handled"

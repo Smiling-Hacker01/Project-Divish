@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { Alert, Modal, Pressable, StyleSheet, View, ViewStyle } from 'react-native';
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, View, ViewStyle } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import { ScreenContainer, TopBar, Text, Avatar, Button, Chip, SegmentedControl } from '@/components';
+import { ScreenContainer, InlineHeader, Text, Avatar, Button, Chip, SegmentedControl } from '@/components';
 import { useTheme, useThemePreference } from '@/theme';
 import { useAuth } from '@/context/AuthContext';
 import { settingsApi } from '@/api';
@@ -131,9 +131,20 @@ export function SettingsScreen() {
   };
 
   return (
-    <ScreenContainer scroll>
-      <TopBar title="Settings" />
-      <View style={{ paddingHorizontal: theme.screenPadding, paddingTop: 8, paddingBottom: 32 }}>
+    // `scroll={false}` here so the InlineHeader stays pinned at the top while only
+    // the content scrolls. With `scroll`, ScreenContainer wraps everything
+    // (including the header) in a ScrollView and the header scrolls away — which
+    // is not what we want on a navigation-context screen like Settings.
+    <ScreenContainer scroll={false}>
+      <InlineHeader title="Settings" showBack />
+      <ScrollView
+        contentContainerStyle={{
+          paddingHorizontal: theme.screenPadding,
+          paddingTop: 8,
+          paddingBottom: 48,
+        }}
+        showsVerticalScrollIndicator={false}
+      >
         <SettingsSection label="Profile">
           <SettingsRow
             leading={
@@ -267,7 +278,7 @@ export function SettingsScreen() {
             onPress={user?.isCreator ? onLeaveSpacePress : undefined}
           />
         </SettingsSection>
-      </View>
+      </ScrollView>
 
       {/* Face ID action sheet — shown when the row is tapped and Face MFA is
           currently active. Re-enroll routes through the same FaceEnrollScreen used

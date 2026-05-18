@@ -79,7 +79,7 @@
       "@react-native-community/datetimepicker"
     ],
     "extra": {
-      "apiBaseUrl": "https://project-divish.onrender.com/api",
+      "apiBaseUrl": "https://unsceptered-fruitily-ena.ngrok-free.dev/api",
       "eas": {
         "projectId": "e176f59a-6be9-45a0-9061-18b73c649e38"
       }
