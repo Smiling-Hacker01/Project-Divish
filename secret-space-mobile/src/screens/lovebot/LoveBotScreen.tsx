@@ -4,7 +4,7 @@ import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { ScreenContainer, TopBar, Text, Card, Button, SwitchRow } from '@/components';
+import { ScreenContainer, InlineHeader, Text, Card, Button, SwitchRow } from '@/components';
 import { useTheme } from '@/theme';
 import { lovebotApi } from '@/api';
 import { LoveBotSettings } from '@/types/api';
@@ -79,9 +79,7 @@ export function LoveBotScreen() {
 
   return (
     <ScreenContainer scroll={false}>
-      <TopBar
-        showBack={false}
-        leadingElement={<View style={{ width: 40 }} />}
+      <InlineHeader
         title="Love Bot"
         rightActions={[{ icon: 'info', onPress: () => setInfoOpen(true) }]}
       />
