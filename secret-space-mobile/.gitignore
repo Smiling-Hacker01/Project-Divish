@@ -12,3 +12,9 @@ web-build/
 .DS_Store
 .env
 .env.local
+
+# Expo prebuild output — `expo run:ios|android` and `expo prebuild` regenerate
+# these from app.json, so we keep them out of source control. Remove these
+# lines only if you need to hand-edit native code.
+ios/
+android/
