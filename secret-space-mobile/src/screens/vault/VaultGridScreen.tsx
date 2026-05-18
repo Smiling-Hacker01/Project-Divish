@@ -15,7 +15,7 @@ import { Image as ExpoImage } from 'expo-image';
 import { Video, ResizeMode } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { ScreenContainer, TopBar, Text, Button, EmptyState, GlassSurface } from '@/components';
+import { ScreenContainer, InlineHeader, Text, Button, EmptyState, GlassSurface } from '@/components';
 import { useTheme } from '@/theme';
 import { vaultApi } from '@/api';
 import { VaultItem } from '@/types/api';
@@ -368,8 +368,7 @@ export function VaultGridScreen() {
 
   return (
     <ScreenContainer scroll={false} glowCorner="none" edges={['top', 'bottom']}>
-      <TopBar
-        showBack={false}
+      <InlineHeader
         title="Vault"
         rightActions={[
           { icon: 'lock', onPress: lockNow },

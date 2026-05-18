@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { ScreenContainer, TopBar, Text, OTPInput, ProgressBar } from '@/components';
+import { ScreenContainer, InlineHeader, Text, OTPInput, ProgressBar } from '@/components';
 import { useTheme } from '@/theme';
 import { authApi } from '@/api';
 import { useAuth } from '@/context/AuthContext';
@@ -58,7 +58,7 @@ export function OTPScreen({ navigation, route }: Props) {
 
   return (
     <ScreenContainer>
-      <TopBar centerElement={<ProgressBar total={4} current={2} />} />
+      <InlineHeader showBack centerElement={<ProgressBar total={4} current={2} />} />
       <View style={[styles.wrap, { paddingHorizontal: theme.screenPadding }]}>
         <View style={styles.hero}>
           <View style={[styles.iconCircle, { backgroundColor: theme.colors.surface, borderColor: theme.colors.hairlineStrong }]}>

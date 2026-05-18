@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, ScrollView, StyleSheet, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { ScreenContainer, TopBar, Text, BondHeart } from '@/components';
+import { ScreenContainer, InlineHeader, Text, BondHeart } from '@/components';
 import { useTheme } from '@/theme';
 
 /**
@@ -51,7 +51,7 @@ export function AboutScreen() {
 
   return (
     <ScreenContainer scroll={false}>
-      <TopBar title="About" opaque={false} />
+      <InlineHeader title="About" showBack />
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: theme.screenPadding, paddingBottom: 48 }}
         showsVerticalScrollIndicator={false}
@@ -97,7 +97,7 @@ export function AboutScreen() {
             />
 
             <Text variant="overline" color="muted" style={{ marginBottom: 12 }}>
-              A note from Vishal
+              A note from the maker
             </Text>
 
             <Letter>

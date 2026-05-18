@@ -6,6 +6,7 @@ export * from './OTPInput';
 export * from './Card';
 export * from './GlassSurface';
 export * from './TopBar';
+export * from './InlineHeader';
 export * from './Avatar';
 export * from './Chip';
 export * from './ProgressBar';

@@ -55,18 +55,20 @@ interface ChatSocketCtx {
 const Context = createContext<ChatSocketCtx | null>(null);
 
 export function ChatSocketProvider({ children }: { children: React.ReactNode }) {
-  const { user, isAuthenticated, refreshProfile } = useAuth();
+  const { user, isAuthenticated, refreshProfile, logout } = useAuth();
   const [status, setStatus] = useState<ConnectionStatus>('idle');
   const [partnerOnline, setPartnerOnline] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const socketRef = useRef<Socket | null>(null);
-  // Stash the latest refreshProfile in a ref so socket listeners (set up once per
-  // connection) can call the *current* function without forcing a reconnect when the
-  // function identity changes.
+  // Stash the latest refreshProfile + logout in refs so socket listeners (set up
+  // once per connection) can call the *current* function without forcing a reconnect
+  // when their identity changes.
   const refreshProfileRef = useRef(refreshProfile);
+  const logoutRef = useRef(logout);
   useEffect(() => {
     refreshProfileRef.current = refreshProfile;
-  }, [refreshProfile]);
+    logoutRef.current = logout;
+  }, [refreshProfile, logout]);
 
   // Diary listeners — registered by screens (Feed/Detail) and fired whenever the server
   // broadcasts a `diary_changed` event. Kept in a ref so subscribing doesn't tear down
@@ -174,6 +176,14 @@ export function ChatSocketProvider({ children }: { children: React.ReactNode }) 
           if (__DEV__) console.log('[ChatSocket] diary listener threw', err);
         }
       });
+    });
+
+    // Space dissolution — emitted by the backend right before it deletes the couple
+    // row when the creator hits "Leave the space." The receiving partner runs the
+    // same client-side cleanup as the dissolver (clears chat/diary queues + keypair
+    // via logout) so they're not stuck on a screen whose backend just 403'd.
+    s.on('space_dissolved', () => {
+      logoutRef.current?.().catch(() => undefined);
     });
 
     // Coupon lifecycle — created / status flip / fulfilled / reviewed. Fired to both

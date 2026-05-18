@@ -5,7 +5,7 @@ import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
-import { ScreenContainer, TopBar, Text, Card, Avatar, Chip, BondHeart, Emoji } from '@/components';
+import { ScreenContainer, InlineHeader, Text, Card, Avatar, Chip, BondHeart, Emoji } from '@/components';
 import { useTheme } from '@/theme';
 import { dashboardApi, settingsApi, tokens } from '@/api';
 import { DashboardData, Mood } from '@/types/api';
@@ -114,14 +114,13 @@ export function HomeScreen() {
 
   return (
     <ScreenContainer scroll={false}>
-      <TopBar
-        showBack={false}
+      <InlineHeader
         leadingElement={
           <View style={styles.leading}>
             <Avatar
               uri={user?.avatarUrl ?? null}
               name={user?.name}
-              size={36}
+              size={32}
               ring="rose"
             />
             <Text variant="bodyMedium" style={{ marginLeft: 10 }} numberOfLines={1}>

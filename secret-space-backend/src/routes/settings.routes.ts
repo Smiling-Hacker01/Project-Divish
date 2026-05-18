@@ -6,7 +6,7 @@ import { avatarUpload } from '../middlewares/avatarUpload';
 import {
   getProfile,
   updateProfile,
-  unlinkPartner,
+  leaveSpace,
   updateFcmToken,
   updateAvatar,
   deleteAvatar,
@@ -61,6 +61,6 @@ router.use(verifyJWT, requireCouple);
 
 router.get('/profile', getProfile);
 router.put('/profile', updateProfile);
-router.post('/unlink', unlinkPartner);
+router.post('/leave-space', leaveSpace);
 
 export default router;

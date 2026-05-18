@@ -1,13 +1,12 @@
-import React, { useRef, useState, forwardRef } from 'react';
+import React, { useState, forwardRef } from 'react';
 import {
+  Platform,
   Pressable,
   StyleSheet,
   TextInput,
   TextInputProps,
   View,
   ViewStyle,
-  Animated,
-  Easing,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '@/theme';
@@ -23,6 +22,27 @@ interface Props extends Omit<TextInputProps, 'style'> {
   rows?: number;
 }
 
+/**
+ * Form input with an optional static title above the field and a vertically-
+ * centered native placeholder inside it.
+ *
+ * Why not a floating label: the old implementation animated `label` from the
+ * field's center up to a small position at the top edge. The math never quite
+ * landed — the unfloated label and the typed text sat at different vertical
+ * positions, and the field had to be tall enough (56px) to accommodate the
+ * floated state at the top, which left an awkward gap below the floated label
+ * once focused. Native `TextInput placeholder` is perfectly centered, so the
+ * cleaner approach is:
+ *
+ *   - When `label` is provided, render it as a small static title ABOVE the
+ *     field. Doesn't move, doesn't animate.
+ *   - The field itself uses TextInput's native `placeholder` which Android +
+ *     iOS both center vertically for free.
+ *
+ * Field height drops from 56 → 52, padding becomes symmetric, and
+ * `includeFontPadding: false` on Android removes the extra line-height padding
+ * that pushes text slightly off-center on Samsung One UI builds.
+ */
 export const Input = forwardRef<TextInput, Props>(function Input(
   {
     label,
@@ -32,44 +52,34 @@ export const Input = forwardRef<TextInput, Props>(function Input(
     containerStyle,
     multiline,
     rows = 4,
-    value,
+    placeholder,
     onFocus,
     onBlur,
-    placeholder,
     ...rest
   },
   ref
 ) {
   const theme = useTheme();
   const [focused, setFocused] = useState(false);
-  const labelAnim = useRef(new Animated.Value(value && value.length > 0 ? 1 : 0)).current;
 
-  const animateLabel = (toValue: number) => {
-    Animated.timing(labelAnim, {
-      toValue,
-      duration: 180,
-      easing: Easing.out(Easing.quad),
-      useNativeDriver: false,
-    }).start();
-  };
-
-  const showFloated = focused || (value && value.length > 0);
-  React.useEffect(() => {
-    animateLabel(showFloated ? 1 : 0);
-  }, [showFloated]);
-
-  const minHeight = multiline ? 56 + rows * 14 : 56;
+  const minHeight = multiline ? 24 + rows * 22 : 52;
   const borderColor = error
     ? 'rgba(232,99,122,0.65)'
     : focused
       ? theme.colors.primary
       : theme.colors.hairline;
 
-  const labelTop = labelAnim.interpolate({ inputRange: [0, 1], outputRange: [18, 8] });
-  const labelSize = labelAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 12] });
-
   return (
     <View style={[{ width: '100%' }, containerStyle]}>
+      {label && (
+        <Text
+          variant="bodySmall"
+          color={error ? 'destructive' : focused ? 'primary' : 'muted'}
+          style={styles.title}
+        >
+          {label}
+        </Text>
+      )}
       <View
         style={[
           styles.field,
@@ -78,38 +88,15 @@ export const Input = forwardRef<TextInput, Props>(function Input(
             backgroundColor: theme.colors.surface,
             borderColor,
             borderWidth: focused || error ? 1.5 : 1,
-            paddingTop: label ? 22 : 16,
-            paddingBottom: 12,
+            paddingVertical: multiline ? 14 : 0,
           },
         ]}
       >
-        {label && (
-          <Animated.Text
-            style={[
-              styles.label,
-              {
-                color: error
-                  ? theme.colors.destructive
-                  : focused
-                    ? theme.colors.primary
-                    : theme.colors.muted,
-                top: labelTop,
-                fontSize: labelSize,
-                fontFamily: theme.typography.label.fontFamily,
-              },
-            ]}
-          >
-            {label}
-          </Animated.Text>
-        )}
         <TextInput
           ref={ref}
-          value={value}
-          {...rest}
           multiline={multiline}
-          // Only show the textinput's own placeholder once the label has lifted out of the way,
-          // otherwise the floating label and the placeholder render in the same vertical slot.
-          placeholder={label && !showFloated ? undefined : placeholder}
+          placeholder={placeholder}
+          placeholderTextColor={theme.colors.muted}
           style={[
             styles.input,
             {
@@ -117,10 +104,12 @@ export const Input = forwardRef<TextInput, Props>(function Input(
               fontFamily: theme.typography.body.fontFamily,
               fontSize: 16,
               textAlignVertical: multiline ? 'top' : 'center',
-              minHeight: multiline ? rows * 22 : 22,
+              minHeight: multiline ? rows * 22 : undefined,
+              // Strips Android's extra line-spacing padding so the text and
+              // placeholder land where we expect them. No-op on iOS.
+              ...(Platform.OS === 'android' ? { includeFontPadding: false } : null),
             },
           ]}
-          placeholderTextColor={theme.colors.muted}
           onFocus={(e) => {
             setFocused(true);
             onFocus?.(e);
@@ -129,6 +118,7 @@ export const Input = forwardRef<TextInput, Props>(function Input(
             setFocused(false);
             onBlur?.(e);
           }}
+          {...rest}
         />
         {trailingIcon && (
           <Pressable onPress={onTrailingPress} style={styles.trailing} hitSlop={8}>
@@ -149,14 +139,28 @@ export const Input = forwardRef<TextInput, Props>(function Input(
 });
 
 const styles = StyleSheet.create({
+  title: { marginBottom: 6, marginLeft: 4 },
   field: {
-    borderRadius: 16,
+    borderRadius: 14,
     paddingHorizontal: 16,
+    paddingRight: 44, // room for optional trailingIcon
     width: '100%',
     justifyContent: 'center',
   },
-  label: { position: 'absolute', left: 16, pointerEvents: 'none' },
-  input: { paddingRight: 32, padding: 0 },
-  trailing: { position: 'absolute', right: 16, top: 0, bottom: 0, justifyContent: 'center' },
+  input: {
+    // padding:0 + symmetric vertical centering via the parent View's
+    // justifyContent gives us a perfectly centered single line.
+    padding: 0,
+    width: '100%',
+  },
+  trailing: {
+    position: 'absolute',
+    right: 12,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    width: 32,
+    alignItems: 'center',
+  },
   errorRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6, marginLeft: 6 },
 });

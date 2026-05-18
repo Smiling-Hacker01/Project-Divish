@@ -10,6 +10,7 @@ import {
 } from '@/services/push';
 import { clearKeyPair, getOrCreateKeyPair } from '@/services/cryptoIdentity';
 import { chatQueue } from '@/services/chatQueue';
+import { diaryQueue } from '@/services/diaryQueue';
 
 const USER_KEY = 'secretspace.user';
 const NOTIF_PREF_KEY = 'secretspace.notificationsEnabled';
@@ -57,10 +58,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // ignore
     }
     teardownPushNotifications();
-    // Drop the previous user's keypair AND their pending message queue so the next
-    // account on this device gets a fresh identity and isn't haunted by orphan sends.
+    // Drop the previous user's keypair AND every pending write so the next account
+    // on this device gets a fresh identity and isn't haunted by orphan sends or
+    // diary drafts from a couple that may have been dissolved.
     await clearKeyPair().catch(() => undefined);
     await chatQueue.clear().catch(() => undefined);
+    await diaryQueue.clear().catch(() => undefined);
     pushInitForUserRef.current = null;
     await authApi.logout();
     await setUser(null);

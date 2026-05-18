@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { Alert, Modal, Pressable, StyleSheet, View, ViewStyle } from 'react-native';
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, View, ViewStyle } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import { ScreenContainer, TopBar, Text, Avatar, Button, Chip, SegmentedControl } from '@/components';
+import { ScreenContainer, InlineHeader, Text, Avatar, Button, Chip, SegmentedControl } from '@/components';
 import { useTheme, useThemePreference } from '@/theme';
 import { useAuth } from '@/context/AuthContext';
 import { settingsApi } from '@/api';
@@ -56,6 +56,54 @@ export function SettingsScreen() {
     setTimeout(() => navigation.navigate('FaceReenroll'), 250);
   };
 
+  // Two-step confirmation for "Leave the space" — irreversible, deletes every
+  // shared row (chats, diary, coupons, love reasons) for both users. We hit it
+  // twice on purpose so a stray tap doesn't drop everything; iOS-style destructive
+  // styling on the final button makes the irreversibility visible. After success
+  // the user gets logged out — the simplest navigation reset, since every
+  // requireCouple-protected route would now 403 for them.
+  const onLeaveSpacePress = () => {
+    Alert.alert(
+      'Close this space and delete your account?',
+      'This permanently deletes your account on this device, all your shared chats, diary entries, coupons, love notes, vault files, and avatar. Your email becomes free to re-register. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Continue',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Are you absolutely sure?',
+              `${user?.partnerName ?? 'Your partner'} will be notified and signed out. They keep their account but lose all shared data with you.`,
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Close and delete',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => undefined);
+                      await settingsApi.leaveSpace();
+                      // logout() clears chatQueue, diaryQueue, the RSA keypair, and
+                      // unregisters push — the account is already gone server-side,
+                      // this just clears the local tokens + caches.
+                      await logout();
+                    } catch (e: any) {
+                      Alert.alert(
+                        'Could not close the space',
+                        e?.response?.data?.error ?? 'Please try again in a moment.'
+                      );
+                    }
+                  },
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
+  };
+
   const disableFace = () => {
     setFaceSheetOpen(false);
     Alert.alert(
@@ -83,9 +131,20 @@ export function SettingsScreen() {
   };
 
   return (
-    <ScreenContainer scroll>
-      <TopBar title="Settings" />
-      <View style={{ paddingHorizontal: theme.screenPadding, paddingTop: 8, paddingBottom: 32 }}>
+    // `scroll={false}` here so the InlineHeader stays pinned at the top while only
+    // the content scrolls. With `scroll`, ScreenContainer wraps everything
+    // (including the header) in a ScrollView and the header scrolls away — which
+    // is not what we want on a navigation-context screen like Settings.
+    <ScreenContainer scroll={false}>
+      <InlineHeader title="Settings" showBack />
+      <ScrollView
+        contentContainerStyle={{
+          paddingHorizontal: theme.screenPadding,
+          paddingTop: 8,
+          paddingBottom: 48,
+        }}
+        showsVerticalScrollIndicator={false}
+      >
         <SettingsSection label="Profile">
           <SettingsRow
             leading={
@@ -130,17 +189,9 @@ export function SettingsScreen() {
             title="Couple code"
             trailing={<CouplePill code={user?.coupleCode ?? null} />}
           />
-          {/* Only the couple creator can actually unlink — the joining partner sees
-              the row but it's inert. */}
-          {user?.partnerName && (
-            <SettingsRow
-              title="Unlink partner"
-              subtitle={user?.isCreator ? undefined : 'Only the partner who created this space can unlink.'}
-              titleColor="destructive"
-              disabled={!user?.isCreator}
-              onPress={user?.isCreator ? () => settingsApi.unlinkPartner() : undefined}
-            />
-          )}
+          {/* The destructive action lives under Account → "Leave the space" — single
+              source of truth, double-confirm. Avoids two destructive rows that do
+              almost-the-same-thing in different sections. */}
         </SettingsSection>
 
         <SettingsSection label="Anniversary">
@@ -215,9 +266,19 @@ export function SettingsScreen() {
 
         <SettingsSection label="Account">
           <SettingsRow title="Log out" titleColor="muted" onPress={logout} />
-          <SettingsRow title="Leave the space" titleColor="destructive" onPress={() => {}} />
+          <SettingsRow
+            title="Leave the space"
+            subtitle={
+              user?.isCreator
+                ? undefined
+                : 'Only your partner can close this space.'
+            }
+            titleColor="destructive"
+            disabled={!user?.isCreator}
+            onPress={user?.isCreator ? onLeaveSpacePress : undefined}
+          />
         </SettingsSection>
-      </View>
+      </ScrollView>
 
       {/* Face ID action sheet — shown when the row is tapped and Face MFA is
           currently active. Re-enroll routes through the same FaceEnrollScreen used

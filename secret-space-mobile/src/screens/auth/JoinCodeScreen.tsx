@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { ScreenContainer, TopBar, Text, OTPInput, Input, Button } from '@/components';
+import { ScreenContainer, InlineHeader, Text, OTPInput, Input, Button } from '@/components';
 import { useTheme } from '@/theme';
 import { authApi } from '@/api';
 import { useAuth } from '@/context/AuthContext';
@@ -38,7 +38,7 @@ export function JoinCodeScreen({ navigation }: Props) {
 
   return (
     <ScreenContainer>
-      <TopBar title="Join your partner" />
+      <InlineHeader title="Join your partner" showBack />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={[styles.wrap, { paddingHorizontal: theme.screenPadding }]}>
           <Text variant="h2" align="center" style={{ marginTop: 32 }}>
