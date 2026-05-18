@@ -49,6 +49,17 @@ export function LoginScreen({ navigation }: Props) {
   const [permission, requestPermission] = useCameraPermissions();
   const ringSpin = useRef(new Animated.Value(0)).current;
 
+  // TopBar back becomes mode-aware so we never render two back buttons on the same
+  // screen. Sub-modes walk back through the state machine, root mode (`email`) goes
+  // up the navigation stack.
+  const handleTopBack = () => {
+    if (mode === 'method-pick') return setMode('email');
+    if (mode === 'face-password' || mode === 'password-only') return setMode('method-pick');
+    if (mode === 'face-scan') return setMode('face-password');
+    if (mode === 'otp') return setMode('method-pick');
+    if (navigation.canGoBack()) navigation.goBack();
+  };
+
   const maskedEmail = email
     ? `${email.charAt(0)}•••@${email.split('@')[1] ?? ''}`
     : '';
@@ -209,7 +220,7 @@ export function LoginScreen({ navigation }: Props) {
   if (lockoutSeconds > 0) {
     return (
       <ScreenContainer glowCorner="top-left">
-        <TopBar showBack centerElement={<BrandMark size={28} animated={false} />} />
+        <TopBar showBack onBack={handleTopBack} centerElement={<BrandMark size={28} animated={false} />} />
         <View style={[styles.wrap, { paddingHorizontal: theme.screenPadding, justifyContent: 'center' }]}>
           <Card variant="tinted-rose" style={{ alignItems: 'center', padding: 32 }}>
             <View
@@ -239,7 +250,7 @@ export function LoginScreen({ navigation }: Props) {
   // ──────────────── Render by mode ────────────────
   return (
     <ScreenContainer>
-      <TopBar showBack centerElement={<BrandMark size={28} animated={false} />} />
+      <TopBar showBack onBack={handleTopBack} centerElement={<BrandMark size={28} animated={false} />} />
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -305,7 +316,6 @@ export function LoginScreen({ navigation }: Props) {
 
           {mode === 'method-pick' && (
             <>
-              <BackInline onPress={() => setMode('email')} />
               <View style={{ marginTop: 16 }}>
                 <Text variant="h2" align="center">
                   Choose login method
@@ -346,7 +356,6 @@ export function LoginScreen({ navigation }: Props) {
 
           {(mode === 'face-password' || mode === 'password-only') && (
             <>
-              <BackInline onPress={() => setMode('method-pick')} />
               <Text variant="h2" style={{ marginTop: 16 }}>
                 Enter password
               </Text>
@@ -391,7 +400,6 @@ export function LoginScreen({ navigation }: Props) {
 
           {mode === 'face-scan' && (
             <>
-              <BackInline onPress={() => setMode('face-password')} />
               <Text variant="h2" align="center" style={{ marginTop: 16 }}>
                 Face verification
               </Text>
@@ -490,7 +498,6 @@ export function LoginScreen({ navigation }: Props) {
 
           {mode === 'otp' && (
             <>
-              <BackInline onPress={() => setMode('method-pick')} />
               <View style={[styles.hero, { marginTop: 16 }]}>
                 <View
                   style={[
@@ -612,18 +619,6 @@ function MethodCard({
   );
 }
 
-function BackInline({ onPress }: { onPress: () => void }) {
-  const theme = useTheme();
-  return (
-    <Pressable onPress={onPress} hitSlop={8} style={styles.backInline}>
-      <Feather name="arrow-left" size={16} color={theme.colors.muted} />
-      <Text variant="bodySmall" color="muted" style={{ marginLeft: 6 }}>
-        Back
-      </Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   wrap: { flex: 1, paddingTop: 16 },
   hero: { alignItems: 'center', marginTop: 32 },
@@ -649,7 +644,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  backInline: { flexDirection: 'row', alignItems: 'center' },
   viewfinderWrap: { width: '100%', aspectRatio: 0.78, marginTop: 24, position: 'relative' },
   viewfinderRing: {
     position: 'absolute',
