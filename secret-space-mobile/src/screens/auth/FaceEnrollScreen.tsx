@@ -4,7 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Feather } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { ScreenContainer, TopBar, Text, Button, ProgressBar } from '@/components';
+import { ScreenContainer, InlineHeader, Text, Button, ProgressBar } from '@/components';
 import { useTheme } from '@/theme';
 import { AuthStackParamList } from '@/navigation/types';
 import { authApi } from '@/api';
@@ -61,7 +61,7 @@ export function FaceEnrollScreen({ navigation, route }: Props) {
 
   return (
     <ScreenContainer glowCorner="top-right">
-      <TopBar title="Set up Face ID" centerElement={<ProgressBar total={4} current={3} />} />
+      <InlineHeader showBack centerElement={<ProgressBar total={4} current={3} />} />
       <View style={[styles.wrap, { paddingHorizontal: theme.screenPadding }]}>
         <View style={styles.frameWrap}>
           <Animated.View

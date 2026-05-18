@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Pressable, Share, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, Share, StyleSheet, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { ScreenContainer, TopBar, Text, Button, Card } from '@/components';
+import { ScreenContainer, InlineHeader, Text, Button, Card } from '@/components';
 import { useTheme } from '@/theme';
 import { useAuth } from '@/context/AuthContext';
 import { settingsApi } from '@/api';
@@ -32,12 +32,16 @@ export function CoupleCodeScreen({}: Props) {
   };
 
   return (
-    <ScreenContainer scroll>
-      <TopBar
+    <ScreenContainer scroll={false}>
+      <InlineHeader
         title="Your code"
+        showBack
         rightActions={[{ icon: 'info', onPress: () => {} }]}
       />
-      <View style={[styles.wrap, { paddingHorizontal: theme.screenPadding }]}>
+      <ScrollView
+        contentContainerStyle={[styles.wrap, { paddingHorizontal: theme.screenPadding, paddingBottom: 48 }]}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.heroCard}>
           <LinearGradient
             colors={['rgba(232,99,122,0.18)', 'rgba(201,169,110,0.16)']}
@@ -96,7 +100,7 @@ export function CoupleCodeScreen({}: Props) {
             onPress={() => settingsApi.getProfile().then(({ user: u }) => u && refreshProfile())}
           />
         </View>
-      </View>
+      </ScrollView>
     </ScreenContainer>
   );
 }

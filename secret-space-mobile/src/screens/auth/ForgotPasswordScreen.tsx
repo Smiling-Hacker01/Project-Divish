@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { ScreenContainer, TopBar, Text, Input, Button } from '@/components';
+import { ScreenContainer, InlineHeader, Text, Input, Button } from '@/components';
 import { useTheme } from '@/theme';
 import { authApi } from '@/api';
 
@@ -21,7 +21,7 @@ export function ForgotPasswordScreen() {
   if (sent) {
     return (
       <ScreenContainer>
-        <TopBar title="Reset password" />
+        <InlineHeader title="Reset password" showBack />
         <View style={[styles.wrap, { paddingHorizontal: theme.screenPadding }]}>
           <View
             style={[
@@ -49,7 +49,7 @@ export function ForgotPasswordScreen() {
 
   return (
     <ScreenContainer>
-      <TopBar title="Reset password" />
+      <InlineHeader title="Reset password" showBack />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={[styles.wrap, { paddingHorizontal: theme.screenPadding }]}>
           <Text variant="h2">Forgot password?</Text>

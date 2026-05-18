@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { Dimensions, Platform, StatusBar as RNStatusBar } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
@@ -12,6 +13,30 @@ import { ChatSocketProvider } from './src/context/ChatSocketContext';
 import { RootNavigator } from './src/navigation/RootNavigator';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
+
+// `initialWindowMetrics` is occasionally `null` on the first launch after install
+// or during a dev-client Metro reload (the native module reports metrics async, JS
+// runs before the report arrives). When that happens, SafeAreaProvider falls back
+// to its zero-inset-then-update behavior — the exact thing we're trying to avoid.
+// This fallback gives us a synchronous best-guess so the very first React render
+// has *some* correct top padding even in that edge case. On real devices the real
+// metrics replace this within ~1 frame; the fallback is only ever load-bearing
+// during the first paint.
+const FALLBACK_INITIAL_METRICS = {
+  frame: {
+    x: 0,
+    y: 0,
+    width: Dimensions.get('window').width,
+    height: Dimensions.get('window').height,
+  },
+  insets: {
+    // Android: use the OS-reported status bar height. iOS: 44 covers notch + clock.
+    top: Platform.OS === 'android' ? (RNStatusBar.currentHeight ?? 24) : 44,
+    bottom: Platform.OS === 'android' ? 0 : 34,
+    left: 0,
+    right: 0,
+  },
+};
 
 export default function App() {
   const [fontsLoaded] = useFraunces({
@@ -38,9 +63,10 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }} onLayout={onLayout}>
       {/* `initialMetrics` makes the very first render use real native-measured insets
-          instead of zeros, preventing the broken first-frame where the TopBar would
-          overlap the status bar before the async inset measurement arrived. */}
-      <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+          instead of zeros. When that value is null (rare but real — fresh install or
+          dev-client Metro reload race), we substitute a synchronous best-guess so the
+          first paint never has overlapping-status-bar broken state. */}
+      <SafeAreaProvider initialMetrics={initialWindowMetrics ?? FALLBACK_INITIAL_METRICS}>
         <ThemeProvider>
           <AuthProvider>
             <ChatSocketProvider>

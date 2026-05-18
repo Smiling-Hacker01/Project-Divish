@@ -14,7 +14,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import {
   ScreenContainer,
-  TopBar,
+  InlineHeader,
   Text,
   Input,
   Button,
@@ -220,7 +220,7 @@ export function LoginScreen({ navigation }: Props) {
   if (lockoutSeconds > 0) {
     return (
       <ScreenContainer glowCorner="top-left">
-        <TopBar showBack onBack={handleTopBack} centerElement={<BrandMark size={28} animated={false} />} />
+        <InlineHeader showBack onBack={handleTopBack} centerElement={<BrandMark size={28} animated={false} />} />
         <View style={[styles.wrap, { paddingHorizontal: theme.screenPadding, justifyContent: 'center' }]}>
           <Card variant="tinted-rose" style={{ alignItems: 'center', padding: 32 }}>
             <View
@@ -250,7 +250,7 @@ export function LoginScreen({ navigation }: Props) {
   // ──────────────── Render by mode ────────────────
   return (
     <ScreenContainer>
-      <TopBar showBack onBack={handleTopBack} centerElement={<BrandMark size={28} animated={false} />} />
+      <InlineHeader showBack onBack={handleTopBack} centerElement={<BrandMark size={28} animated={false} />} />
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -277,7 +277,7 @@ export function LoginScreen({ navigation }: Props) {
 
               <View style={{ marginTop: 32 }}>
                 <Input
-                  label="Email"
+                  placeholder="Email"
                   value={email}
                   onChangeText={(v) => {
                     setEmail(v);
@@ -367,7 +367,7 @@ export function LoginScreen({ navigation }: Props) {
 
               <View style={{ marginTop: 32 }}>
                 <Input
-                  label="Password"
+                  placeholder="Password"
                   value={password}
                   onChangeText={(v) => {
                     setPassword(v);
