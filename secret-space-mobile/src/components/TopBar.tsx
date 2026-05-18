@@ -25,6 +25,13 @@ interface Props {
   // content underneath doesn't bleed through. Set to false when the bar is over a
   // hero image and you want it transparent.
   opaque?: boolean;
+  // `solid` (default): chunky icons, hairline divider, opaque background — used on Chat
+  //   and navigation-context screens (Settings, Auth, modals) where the bar anchors
+  //   the page and pins partner info during scroll.
+  // `floating`: transparent background, no hairline, slimmer icons — used on tab
+  //   landing screens (Home, Vault, LoveBot) where the bar should feel weightless
+  //   and let the corner-glow gradient bleed through.
+  variant?: 'solid' | 'floating';
 }
 
 export function TopBar({
@@ -36,6 +43,7 @@ export function TopBar({
   centerElement,
   style,
   opaque = true,
+  variant = 'solid',
 }: Props) {
   const theme = useTheme();
   const navigation = useNavigation();
@@ -43,6 +51,25 @@ export function TopBar({
     if (onBack) return onBack();
     if (navigation.canGoBack()) navigation.goBack();
   };
+
+  const isFloating = variant === 'floating';
+  // Background + hairline rules.
+  //   - `floating` always wins: transparent + no hairline so the corner-glow gradient
+  //     reads through and the bar feels weightless.
+  //   - `solid` + opaque (default): background fill + hairline so scrolled content
+  //     doesn't bleed up.
+  //   - `solid` + opaque=false: transparent over a hero image (legacy About-screen use).
+  const bgColor = isFloating || !opaque ? 'transparent' : theme.colors.background;
+  const showHairline = !isFloating && opaque;
+
+  // Icon button dimensions: 36×36 floating, 40×40 solid. The smaller chip on floating
+  // bars reads lighter against the gradient backdrop without losing tap-target size
+  // (still >=44pt with hitSlop).
+  const iconBtnSize = isFloating ? 36 : 40;
+  const iconBtnRadius = iconBtnSize / 2;
+  // On floating we drop the border outline — the glass fill alone gives enough
+  // separation against the gradient. On solid we keep the border for crispness.
+  const iconBorderWidth = isFloating ? 0 : 1;
 
   return (
     <SafeAreaView
@@ -52,8 +79,8 @@ export function TopBar({
       // — no double-padding. When the parent hasn't (or fails to, as on some Samsung
       // Android builds with newArchEnabled), this one applies the inset itself.
       style={{
-        backgroundColor: opaque ? theme.colors.background : 'transparent',
-        borderBottomWidth: opaque ? StyleSheet.hairlineWidth : 0,
+        backgroundColor: bgColor,
+        borderBottomWidth: showHairline ? StyleSheet.hairlineWidth : 0,
         borderBottomColor: theme.colors.hairline,
       }}
     >
@@ -66,6 +93,10 @@ export function TopBar({
               style={({ pressed }) => [
                 styles.iconBtn,
                 {
+                  width: iconBtnSize,
+                  height: iconBtnSize,
+                  borderRadius: iconBtnRadius,
+                  borderWidth: iconBorderWidth,
                   backgroundColor: theme.colors.glass,
                   borderColor: theme.colors.hairlineStrong,
                   opacity: pressed ? 0.7 : 1,
@@ -73,7 +104,7 @@ export function TopBar({
               ]}
               hitSlop={8}
             >
-              <Feather name="chevron-left" size={22} color={theme.colors.foreground} />
+              <Feather name="chevron-left" size={isFloating ? 20 : 22} color={theme.colors.foreground} />
             </Pressable>
           )}
         </View>
@@ -98,6 +129,10 @@ export function TopBar({
                 style={({ pressed }) => [
                   styles.iconBtn,
                   {
+                    width: iconBtnSize,
+                    height: iconBtnSize,
+                    borderRadius: iconBtnRadius,
+                    borderWidth: iconBorderWidth,
                     backgroundColor: theme.colors.glass,
                     borderColor: theme.colors.hairlineStrong,
                     marginLeft: i ? 8 : 0,
@@ -106,7 +141,7 @@ export function TopBar({
                 ]}
                 hitSlop={8}
               >
-                <Feather name={a.icon} size={20} color={theme.colors.foreground} />
+                <Feather name={a.icon} size={isFloating ? 18 : 20} color={theme.colors.foreground} />
                 {showDot && (
                   <View
                     style={[
@@ -153,11 +188,9 @@ const styles = StyleSheet.create({
   // buttons (40px each + 8 margin = 88px, but only ~80px allotted on a 360dp screen).
   side: { flexDirection: 'row', alignItems: 'center', minWidth: 40 },
   center: { flex: 1, alignItems: 'center', paddingHorizontal: 8 },
+  // Width / height / borderRadius / borderWidth are applied dynamically per-variant
+  // by the component itself — we only set the layout properties shared across both.
   iconBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },

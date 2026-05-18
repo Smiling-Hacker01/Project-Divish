@@ -80,8 +80,9 @@ export function LoveBotScreen() {
   return (
     <ScreenContainer scroll={false}>
       <TopBar
+        variant="floating"
         showBack={false}
-        leadingElement={<View style={{ width: 40 }} />}
+        leadingElement={<View style={{ width: 36 }} />}
         title="Love Bot"
         rightActions={[{ icon: 'info', onPress: () => setInfoOpen(true) }]}
       />

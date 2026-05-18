@@ -115,6 +115,7 @@ export function HomeScreen() {
   return (
     <ScreenContainer scroll={false}>
       <TopBar
+        variant="floating"
         showBack={false}
         leadingElement={
           <View style={styles.leading}>
