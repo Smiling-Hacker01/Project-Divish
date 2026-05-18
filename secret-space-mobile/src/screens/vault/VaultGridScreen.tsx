@@ -369,6 +369,7 @@ export function VaultGridScreen() {
   return (
     <ScreenContainer scroll={false} glowCorner="none" edges={['top', 'bottom']}>
       <TopBar
+        variant="floating"
         showBack={false}
         title="Vault"
         rightActions={[
