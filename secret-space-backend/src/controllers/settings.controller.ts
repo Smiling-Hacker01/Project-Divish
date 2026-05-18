@@ -96,22 +96,31 @@ export const updateProfile = async (req: Request, res: Response, next: NextFunct
 
 // ── POST /api/settings/leave-space ─────────────────────────────────────────────
 // Destructive — only the space *creator* (User A) can dissolve the shared space.
+// This permanently deletes the couple AND the dissolver's user account so the
+// same email can sign up fresh. The partner's account survives (they only lose
+// the shared data).
+//
+// Cascade order matters. Schema relations:
+//   Couple → cascade to Message, DiaryEntry (and its DiaryReaction children),
+//     Mood, Coupon, LoveReason  — all couple-scoped.
+//   User → cascade to FaceDescriptor + VaultFile.
+//
+// Critical: many User-referencing FKs on couple-scoped tables (Message.senderId,
+// DiaryEntry.authorId, Coupon.creatorId, LoveReason.authorId, etc.) are NOT
+// declared `onDelete: Cascade`. Postgres default is RESTRICT — deleting a User
+// who still has any of those rows fails. So we MUST delete the Couple first
+// (which removes all the User-referencing rows transitively) and only then the
+// User. Inside one transaction so a partial state is impossible.
 //
 // What this does, in order:
 //   1. Authorize. User B gets a 403 with a partner-facing message.
-//   2. Collect every Cloudinary URL we own on this couple — couple photo, all
-//      chat-message media, all diary media+thumbnails — so we can clean them up
-//      after the DB row is gone. (Vault files are owner-scoped, not couple-scoped,
-//      so they survive the dissolution — each user keeps their own vault.)
-//   3. Look up the partner's id (if any) and the creator's name for the push body.
-//   4. Emit `space_dissolved` to the couple room BEFORE the delete so the partner's
-//      live socket sees it while the room still exists.
-//   5. `prisma.couple.delete` — Prisma cascades to Message, DiaryEntry (and its
-//      DiaryReaction children), Mood, Coupon, LoveReason. One transaction, all-or-
-//      nothing — partial state is impossible.
-//   6. Fire-and-forget cleanup of Cloudinary assets, LoveBot dedup Redis keys, and
-//      a push notification to the partner. None of these block the response — the
-//      user's request returns the moment the DB row is gone.
+//   2. Collect every Cloudinary URL we own on this couple + the dissolver's
+//      personal avatar and vault assets.
+//   3. Emit `space_dissolved` to the couple room BEFORE the delete so the
+//      partner's live socket sees it while the room still exists.
+//   4. Single transaction: delete Couple, then delete User.
+//   5. Fire-and-forget cleanup of Cloudinary assets, Redis refresh-token row,
+//      LoveBot dedup keys, and a push notification to the partner.
 export const leaveSpace = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     if (!req.isCreator) {
@@ -124,14 +133,14 @@ export const leaveSpace = async (req: Request, res: Response, next: NextFunction
     const coupleId = req.coupleId!;
     const userId = req.user!.userId;
 
-    // Single query collects everything we need before the cascade nukes it.
+    // One query collects everything we need before the cascade nukes it.
     const couple = await prisma.couple.findUnique({
       where: { id: coupleId },
       select: {
         userAId: true,
         userBId: true,
         couplePhoto: true,
-        userA: { select: { name: true } },
+        userA: { select: { name: true, avatarUrl: true } },
         messages: { select: { mediaUrl: true } },
         diaryEntries: { select: { mediaUrl: true, thumbnailUrl: true } },
       },
@@ -142,34 +151,51 @@ export const leaveSpace = async (req: Request, res: Response, next: NextFunction
       return;
     }
 
+    // Vault files belong to the *user*, not the couple — fetch them separately so
+    // we can clean up Cloudinary for the dissolver's vault before we lose the rows.
+    const vaultFiles = await prisma.vaultFile.findMany({
+      where: { ownerId: userId },
+      select: { fileUrl: true, thumbnailUrl: true },
+    });
+
     const partnerId = couple.userBId ?? undefined;
     const creatorName = couple.userA?.name ?? 'Your partner';
 
-    // Collect Cloudinary URLs to delete after the DB commit. We do this *before*
-    // the delete because cascade wipes the rows we'd read from.
+    // Collect ALL Cloudinary URLs that need to disappear after the DB commit. We
+    // gather them before the delete because the rows we'd read from are about to
+    // be gone.
     const cloudinaryUrls: string[] = [];
     if (couple.couplePhoto) cloudinaryUrls.push(couple.couplePhoto);
+    if (couple.userA?.avatarUrl) cloudinaryUrls.push(couple.userA.avatarUrl);
     for (const m of couple.messages) if (m.mediaUrl) cloudinaryUrls.push(m.mediaUrl);
     for (const d of couple.diaryEntries) {
       if (d.mediaUrl) cloudinaryUrls.push(d.mediaUrl);
       if (d.thumbnailUrl) cloudinaryUrls.push(d.thumbnailUrl);
     }
+    for (const v of vaultFiles) {
+      cloudinaryUrls.push(v.fileUrl);
+      if (v.thumbnailUrl) cloudinaryUrls.push(v.thumbnailUrl);
+    }
 
     // Notify the room *before* the delete so the partner's connected socket sees
-    // the event while it still has membership. After delete the room ID is still
-    // valid for emitting but partner-side handlers will use it as a signal to
-    // tear down and navigate away.
+    // the event while it still has membership.
     try {
       io?.to(coupleId).emit('space_dissolved', { coupleId, dissolvedBy: userId });
     } catch (err: any) {
       logger.warn({ err: err.message, coupleId }, '[LeaveSpace] socket emit failed (non-fatal)');
     }
 
-    await prisma.couple.delete({ where: { id: coupleId } });
+    // Transaction: couple delete → user delete. Order is load-bearing (see comment
+    // above). Wrapped in one tx so a crash mid-flight can't leave a user with no
+    // couple but still referencing deleted shared rows.
+    await prisma.$transaction(async (tx) => {
+      await tx.couple.delete({ where: { id: coupleId } });
+      await tx.user.delete({ where: { id: userId } });
+    });
 
     logger.info(
-      { coupleId, userId, partnerId, mediaCount: cloudinaryUrls.length },
-      '[LeaveSpace] Space dissolved'
+      { coupleId, userId, partnerId, mediaCount: cloudinaryUrls.length, vaultCount: vaultFiles.length },
+      '[LeaveSpace] Space dissolved + account deleted'
     );
 
     // ── Fire-and-forget cleanup. None of these affect the response or each other.
@@ -202,11 +228,12 @@ export const leaveSpace = async (req: Request, res: Response, next: NextFunction
       );
     }
 
-    // Drop LoveBot dedup keys for this couple so the room ID can be reused cleanly
-    // if a future couple happens to land on the same ID (UUID collision: not in this
-    // universe, but the hygiene is free).
+    // Redis cleanup: drop the dissolver's refresh token so a stolen/cached token
+    // can't be used after their account is gone, and drop LoveBot dedup keys for
+    // the couple's room id.
     void (async () => {
       try {
+        await redis.del(`refresh:${userId}`);
         const keys = await redis.keys(`lovebot:sent:${coupleId}:*`);
         if (keys.length > 0) await redis.del(...keys);
       } catch (err: any) {

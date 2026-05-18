@@ -64,8 +64,8 @@ export function SettingsScreen() {
   // requireCouple-protected route would now 403 for them.
   const onLeaveSpacePress = () => {
     Alert.alert(
-      'Close this space?',
-      'This permanently deletes all your shared chats, diary entries, coupons, and love notes. This cannot be undone.',
+      'Close this space and delete your account?',
+      'This permanently deletes your account on this device, all your shared chats, diary entries, coupons, love notes, vault files, and avatar. Your email becomes free to re-register. This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -74,18 +74,19 @@ export function SettingsScreen() {
           onPress: () => {
             Alert.alert(
               'Are you absolutely sure?',
-              `${user?.partnerName ?? 'Your partner'} will be notified. They'll keep their account but lose all shared data.`,
+              `${user?.partnerName ?? 'Your partner'} will be notified and signed out. They keep their account but lose all shared data with you.`,
               [
                 { text: 'Cancel', style: 'cancel' },
                 {
-                  text: 'Close space',
+                  text: 'Close and delete',
                   style: 'destructive',
                   onPress: async () => {
                     try {
                       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => undefined);
                       await settingsApi.leaveSpace();
-                      // logout() already clears chatQueue, diaryQueue, the RSA keypair,
-                      // and unregisters push — exactly the post-leave cleanup we want.
+                      // logout() clears chatQueue, diaryQueue, the RSA keypair, and
+                      // unregisters push — the account is already gone server-side,
+                      // this just clears the local tokens + caches.
                       await logout();
                     } catch (e: any) {
                       Alert.alert(
