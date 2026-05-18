@@ -1,5 +1,5 @@
-import React from 'react';
-import { Dimensions, Pressable, StyleSheet, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Dimensions, Keyboard, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { BottomTabBarProps, createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -42,6 +42,27 @@ const ICONS: Record<string, keyof typeof Feather.glyphMap> = {
 function FloatingTabBar({ state, navigation }: BottomTabBarProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  // Track soft-keyboard visibility so the floating bar can yield when it would
+  // otherwise sit on top of an input the user is typing into (the symptom that
+  // hid the Vault unlock password field behind the bar). On Android we use
+  // `keyboardDidShow`/`keyboardDidHide`; iOS prefers `keyboardWillShow`/`Hide`
+  // for smoother animation timing.
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, () => setKeyboardOpen(true));
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardOpen(false));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  // Hide entirely when the keyboard is up. The center "+" button is part of
+  // this bar so it disappears too — fine, since users entering text aren't
+  // tapping create actions in the same gesture.
+  if (keyboardOpen) return null;
 
   return (
     <View

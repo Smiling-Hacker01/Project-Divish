@@ -2,7 +2,6 @@ import React from 'react';
 import { Pressable, StyleSheet, View, ViewStyle } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@/theme';
 import { Text } from './Text';
 
@@ -72,12 +71,10 @@ export function TopBar({
   const iconBorderWidth = isFloating ? 0 : 1;
 
   return (
-    <SafeAreaView
-      edges={['top']}
-      // Note: SafeAreaView from react-native-safe-area-context is frame-aware. When a
-      // parent SafeAreaView has already applied the top inset, this one resolves to 0
-      // — no double-padding. When the parent hasn't (or fails to, as on some Samsung
-      // Android builds with newArchEnabled), this one applies the inset itself.
+    // No SafeAreaView wrap — ScreenContainer now applies the top inset
+    // deterministically (useSafeAreaInsets + StatusBar.currentHeight fallback)
+    // so we'd only fight it. The bgColor + hairline live on the bar's own row.
+    <View
       style={{
         backgroundColor: bgColor,
         borderBottomWidth: showHairline ? StyleSheet.hairlineWidth : 0,
@@ -176,7 +173,7 @@ export function TopBar({
           })}
         </View>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 

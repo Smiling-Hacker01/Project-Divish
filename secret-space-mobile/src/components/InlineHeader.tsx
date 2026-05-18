@@ -2,7 +2,6 @@ import React from 'react';
 import { Pressable, StyleSheet, View, ViewStyle } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@/theme';
 import { Text } from './Text';
 
@@ -109,26 +108,23 @@ export function InlineHeader({
       : null;
 
   return (
-    // SafeAreaView edges={['top']} for defense-in-depth. If the parent
-    // ScreenContainer already applied the top inset (the common case),
-    // react-native-safe-area-context's frame-aware logic makes this one resolve
-    // to 0 — no double-padding. If the parent failed to (Samsung Android +
-    // newArchEnabled occasionally drops the inset), this one applies it itself
-    // so the header is never under the status bar.
-    <SafeAreaView edges={['top']}>
-      <View
-        style={[
-          styles.row,
-          { paddingHorizontal: theme.screenPadding, paddingTop, paddingBottom: 8 },
-          style,
-        ]}
-      >
-        <View style={styles.side}>{left}</View>
+    // No SafeAreaView wrap — the parent ScreenContainer now applies the top
+    // inset deterministically (via useSafeAreaInsets + StatusBar.currentHeight),
+    // so wrapping here would either double-pad or fight the parent's logic.
+    // The `paddingTop` prop is purely cosmetic breathing room above the row.
+    <View
+      style={[
+        styles.row,
+        { paddingHorizontal: theme.screenPadding, paddingTop, paddingBottom: 8 },
+        style,
+      ]}
+    >
+      <View style={styles.side}>{left}</View>
 
-        <View style={styles.center}>{center}</View>
+      <View style={styles.center}>{center}</View>
 
-        <View style={[styles.side, { justifyContent: 'flex-end' }]}>
-          {rightActions.map((a, i) => {
+      <View style={[styles.side, { justifyContent: 'flex-end' }]}>
+        {rightActions.map((a, i) => {
           const numericBadge = typeof a.badge === 'number' ? a.badge : null;
           const showDot = a.badge === true;
           return (
@@ -172,9 +168,8 @@ export function InlineHeader({
             </Pressable>
           );
         })}
-        </View>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
