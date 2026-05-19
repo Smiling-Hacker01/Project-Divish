@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import prisma from '../config/prisma';
 import { uploadBase64, deleteFile } from '../services/storage.service';
+import { generateDailyThought } from '../services/dailyThoughtGenerator';
 import { updateCouplePhotoSchema } from '../utils/validators';
 
 // ── GET /api/dashboard ─────────────────────────────────────────────────────────
@@ -19,6 +20,10 @@ export const getHomeData = async (req: Request, res: Response, next: NextFunctio
         userBId: true,
         userALoveBotTime: true,
         userBLoveBotTime: true,
+        // Both partners' names are pulled in so the daily-thought generator
+        // can include them as tonal context in its Gemini prompt.
+        userA: { select: { name: true } },
+        userB: { select: { name: true } },
       },
     });
 
@@ -55,24 +60,26 @@ export const getHomeData = async (req: Request, res: Response, next: NextFunctio
       select: { reason: true },
     });
 
-    // Fetch the partner's LoveBot send time (as that implies when YOU will receive it)
+    // The partner's LoveBot send time tells us when YOU will receive it. In the
+    // current model, each user controls their OWN lovebot time and it specifies
+    // when their partner gets pinged — so to know when *I* get one, look at my
+    // partner's configured time.
     const isCreator = couple.userAId === userId;
-    const nextReasonDeliveryTime = isCreator ? couple.userALoveBotTime : couple.userALoveBotTime;
-    // Wait, the sender's time determines when the recipient gets it. 
-    // If the recipient is user A, the sender is user B. So we should use userB's configured time.
-    // However, if RBAC gives user A full control, user A sets the time for BOTH in older models.
-    // In our RBAC, User A controls userALoveBotTime, User B controls userBLoveBotTime.
-    const senderTime = !isCreator ? couple.userALoveBotTime : couple.userBLoveBotTime;
+    const senderTime = isCreator ? couple.userBLoveBotTime : couple.userALoveBotTime;
 
-    // Daily thought — a static inspirational quote
-    const dailyThoughts = [
-      "Because the hardest seasons are the ones you'll be most proud of surviving together.",
-      "Because one bad day doesn't erase a hundred beautiful ones.",
-      "Because they chose you too.",
-      "Every relationship has hard days. Staying anyway is the whole point.",
-      "You chose each other once. Choose each other again today.",
-    ];
-    const dailyThought = dailyThoughts[Math.floor(Date.now() / 86400000) % dailyThoughts.length];
+    // Daily thought — Gemini-generated perseverance reflection that complements
+    // (rather than duplicates) the LoveBot's "Today's Reason." The generator
+    // handles its own Redis caching with an IST date key, so this call hits
+    // Gemini at most once per couple per day and serves cache on every other
+    // Home open. Falls back to an inline bank when Gemini is unavailable; the
+    // bank result is intentionally NOT cached so a brief Gemini hiccup
+    // doesn't lock the couple into a fallback for the rest of the day.
+    const dailyThought = await generateDailyThought({
+      coupleId,
+      user1Name: couple.userA?.name ?? 'You',
+      user2Name: couple.userB?.name ?? 'your partner',
+      anniversaryDate: couple.anniversaryDate?.toISOString().split('T')[0],
+    });
 
     const partnerStatus = couple.userBId ? 'active' : 'pending';
 
