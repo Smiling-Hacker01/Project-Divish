@@ -103,7 +103,12 @@ export async function generateLoveReason({
     const cleaned = cleanReason(text);
     // Sanity bounds: anything too short or absurdly long means the model
     // got confused. Fall back rather than send something weird.
-    if (cleaned.length < 10 || cleaned.length > 300) {
+    // 220 char hard ceiling: Today's Reason card uses serifQuote at fontSize 18
+    // / lineHeight 26 with a thin rose bar on the left, so it has slightly more
+    // breathing room than the daily-thought card but still wants to stay under
+    // ~4 lines. Anything longer than 220 chars is also probably Gemini drifting
+    // off-prompt — fall back rather than display a runaway sentence.
+    if (cleaned.length < 10 || cleaned.length > 220) {
       logger.warn({ length: cleaned.length, preview: cleaned.slice(0, 80) }, '[LoveReason] Gemini output out of bounds, using fallback');
       return pickFallback(recentReasons);
     }
@@ -139,7 +144,7 @@ From: ${senderName}
 To: ${recipientName}
 
 Write ONE fresh reason. Rules:
-- 1 or 2 sentences, total length under 200 characters
+- 1 sentence, between 70 and 180 characters total — this is a hard constraint, not a guideline
 - Warm and specific, not generic
 - Sound like a real person — never a Hallmark card or greeting card cliche
 - Address ${recipientName} directly using "you"

@@ -233,16 +233,37 @@ export function HomeScreen() {
           </View>
           <View style={{ flexDirection: 'row', marginTop: 12 }}>
             <View style={{ width: 3, backgroundColor: theme.colors.primary, marginRight: 12, borderRadius: 2 }} />
-            <Text variant="serifQuote" style={{ flex: 1, fontSize: 18, lineHeight: 26 }}>
+            {/* numberOfLines={5} is a layout safety net — server caps the reason at
+                ~220 chars which is ~4 lines at this font, but if the cap ever slips
+                a runaway string will still ellipsize instead of pushing the rest of
+                the home screen off the bottom. */}
+            <Text variant="serifQuote" style={{ flex: 1, fontSize: 18, lineHeight: 26 }} numberOfLines={5}>
               {data?.todaysReason ?? 'Because they chose you, too.'}
             </Text>
           </View>
         </Card>
 
-        {/* Daily thought */}
+        {/* Daily thought — distinct from "Today's Reason" both in label and in
+            content category: this slot is a perseverance reflection ("a reason
+            to keep showing up"), not a love note. The "FOR THE HARD DAYS"
+            overline anchors that intent so the two cards never read as
+            duplicates even if a short backend rotation lands on a similar
+            phrase. */}
         <Card variant="tinted-gold" padding={16} style={{ marginTop: 12 }}>
-          <Text variant="serifQuote" style={{ fontSize: 14, lineHeight: 20 }} italic>
-            “{data?.dailyThought ?? 'Together is a wonderful place to be.'}”
+          <Text variant="overline" color="muted" style={{ marginBottom: 8 }}>
+            For the hard days
+          </Text>
+          <Text
+            variant="serifQuote"
+            style={{ fontSize: 14, lineHeight: 20 }}
+            italic
+            // Layout safety net — server caps the daily thought at 180 chars,
+            // which fits comfortably in 3-4 lines at this font. numberOfLines
+            // ensures a runaway string would ellipsize rather than push the
+            // quick-tiles below it off-screen.
+            numberOfLines={5}
+          >
+            “{data?.dailyThought ?? "Every couple that's still together had a moment they almost weren't."}”
           </Text>
         </Card>
 
