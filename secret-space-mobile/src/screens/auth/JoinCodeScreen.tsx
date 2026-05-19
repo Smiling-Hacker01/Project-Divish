@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, StyleSheet, TextInput, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { ScreenContainer, InlineHeader, Text, OTPInput, Input, Button } from '@/components';
+import { ScreenContainer, InlineHeader, Text, Input, Button } from '@/components';
 import { useTheme } from '@/theme';
 import { authApi } from '@/api';
 import { useAuth } from '@/context/AuthContext';
@@ -13,15 +13,31 @@ export function JoinCodeScreen({ navigation }: Props) {
   const theme = useTheme();
   const { setUser } = useAuth();
   const [code, setCode] = useState('');
+  const [codeFocused, setCodeFocused] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Normalize the code as the user types. The canonical format is
+  // `LOVE-XXX-XXX` (12 chars including dashes); we keep alphanumerics AND
+  // dashes, force uppercase, and cap at the canonical length. Pasting the
+  // full code (including the dashes) just works. Pasting whitespace-padded
+  // input gets cleaned automatically.
+  const handleCodeChange = (raw: string) => {
+    const cleaned = raw.replace(/[^a-zA-Z0-9-]/g, '').toUpperCase().slice(0, CODE_LEN);
+    setCode(cleaned);
+  };
+
+  // Couple codes look like `LOVE-XXX-XXX` (12 chars including the two dashes).
+  // We accept either the canonical form or just the suffix portion the partner
+  // might share casually — the server uppercases + trims either way.
+  const CODE_LEN = 12;
+
   const submit = async () => {
-    if (code.length !== 6 || !name || !email || password.length < 8) {
-      setError('Fill every field — code must be 6 characters.');
+    if (code.length !== CODE_LEN || !name || !email || password.length < 8) {
+      setError('Fill every field — the code looks like LOVE-XXX-XXX.');
       return;
     }
     try {
@@ -48,14 +64,39 @@ export function JoinCodeScreen({ navigation }: Props) {
             Ask your partner to share their code from Settings.
           </Text>
 
-          <View style={{ marginTop: 40 }}>
-            <OTPInput
+          <View
+            style={[
+              styles.codeField,
+              {
+                backgroundColor: theme.colors.surface,
+                borderColor: error && code.length !== CODE_LEN
+                  ? 'rgba(232,99,122,0.65)'
+                  : codeFocused
+                    ? theme.colors.primary
+                    : theme.colors.hairline,
+                borderWidth: codeFocused || (error && code.length !== CODE_LEN) ? 1.5 : 1,
+              },
+            ]}
+          >
+            <TextInput
               value={code}
-              onChange={setCode}
-              length={6}
-              numerals="alphanumeric"
-              uppercase
-              error={!!error && code.length !== 6}
+              onChangeText={handleCodeChange}
+              onFocus={() => setCodeFocused(true)}
+              onBlur={() => setCodeFocused(false)}
+              placeholder="LOVE-XXX-XXX"
+              placeholderTextColor={theme.colors.muted}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              autoComplete="off"
+              maxLength={CODE_LEN}
+              style={[
+                styles.codeInput,
+                {
+                  color: theme.colors.foreground,
+                  fontFamily: theme.typography.mono?.fontFamily ?? 'JetBrainsMono_500Medium',
+                  ...(Platform.OS === 'android' ? { includeFontPadding: false } : null),
+                },
+              ]}
             />
           </View>
 
@@ -95,4 +136,23 @@ export function JoinCodeScreen({ navigation }: Props) {
 
 const styles = StyleSheet.create({
   wrap: { flex: 1, paddingTop: 16 },
+  // 64pt height + 1.5pt border + 12pt vertical breathing room gives the code
+  // entry visual gravity without taking over the screen. Monospaced font +
+  // big letter-spacing makes a 6-char code feel like a code, not a word.
+  codeField: {
+    height: 64,
+    borderRadius: 14,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  codeInput: {
+    width: '100%',
+    // 12-char code (LOVE-XXX-XXX) needs a smaller font + spacing than a 6-char
+    // OTP-style code so it fits comfortably on phone widths down to ~340 dp.
+    fontSize: 22,
+    letterSpacing: 2,
+    textAlign: 'center',
+    padding: 0,
+  },
 });
