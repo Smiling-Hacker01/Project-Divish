@@ -8,6 +8,7 @@
     "scheme": "secretspace",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "icon": "./assets/icon.png",
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.divish.secretspace",
@@ -24,6 +25,7 @@
     "android": {
       "package": "com.divish.secretspace",
       "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon-foreground.png",
         "backgroundColor": "#0D0D0F"
       },
       "permissions": [
@@ -79,7 +81,7 @@
       "@react-native-community/datetimepicker"
     ],
     "extra": {
-      "apiBaseUrl": "https://unsceptered-fruitily-ena.ngrok-free.dev/api",
+      "apiBaseUrl": "https://project-divish.onrender.com/api",
       "eas": {
         "projectId": "e176f59a-6be9-45a0-9061-18b73c649e38"
       }
