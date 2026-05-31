@@ -1,14 +1,22 @@
 import logger from '../config/logger';
+import { humanize, recordOutcome } from './humanize';
 
 /**
  * Generates a fresh "love reason" via Google Gemini, with a small inline
  * fallback bank for when the API is unavailable / rate-limited / returns
  * empty.
  *
- * Why Gemini specifically: their free tier (gemini-1.5-flash) gives us
- * 1500 requests/day with no card required, which is 750× our peak usage
- * (1 couple, 2 directions, once per day). The API is simple HTTPS — no SDK
- * dependency, just `fetch`.
+ * Pipeline:
+ *   Gemini → humanize() → ship
+ *                ↓ (high score)
+ *              retry once with anti-pattern hint
+ *                ↓ (still high score)
+ *              fallback bank
+ *
+ * The humanizer's design (services/humanize.ts) biases toward transforming
+ * imperfect output rather than rejecting it. We expect the bank to serve
+ * ~2% of requests in steady state — see /api/admin/humanize-stats for
+ * live distribution.
  *
  * Dedup: callers pass the recipient's last ~10 used reasons so the prompt
  * can explicitly ask Gemini to avoid those themes. Combined with
@@ -21,18 +29,30 @@ const GEMINI_API_URL =
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
-// Inline safety net. These read as universal (no partner-specific detail) so
-// they fit any couple — used only when Gemini is unreachable. Kept short on
-// purpose to match the cadence of personalized reasons.
+// Inline safety net. These ship in the APK and display verbatim when Gemini
+// is unreachable, so they're the gold standard for voice. Read more like
+// one partner texting the other than like a motivational quote: specific,
+// slightly self-aware, no Hallmark vocabulary. Updated as we learn what
+// actually lands with users.
 const FALLBACK_REASONS = [
-  "Because the days feel softer when you're in them.",
-  'Because you make the small things feel like the big things.',
-  'Because of the way you remember the tiny details I forget.',
-  'Because being known by you is the best part of any day.',
-  "Because you laugh at jokes I didn't even know were jokes.",
-  "Because there's a calm in your presence I can't find anywhere else.",
-  'Because you let me be exactly who I am, and love it.',
-  'Because you make the ordinary feel like a story worth telling.',
+  'Because you laugh at your own jokes before you even finish telling them.',
+  'Because you remember exactly how I like my coffee, even on days I forget myself.',
+  'Because the way you say my name sounds different from everyone else’s.',
+  'Because you steal the blanket and somehow I still want to sleep next to you.',
+  'Because you sing along to songs you don’t actually know the words to.',
+  'Because your hand finds mine in the dark without either of us thinking about it.',
+  'Because you save the last bite of whatever you’re eating for me.',
+  'Because you let me ramble about things you secretly don’t care about.',
+  'Because you remember what I told you about my day three weeks ago.',
+  'Because you sneeze loud enough to startle the entire apartment.',
+  'Because you make ordinary Tuesdays feel like something worth showing up for.',
+  'Because you wear my hoodies and I never bother asking for them back.',
+  'Because you fight bad days with bad jokes and somehow it works.',
+  'Because you know when I need to be left alone, and when I’m only pretending I do.',
+  'Because you text me ridiculous things at 2am and I never want it to stop.',
+  'Because you cry at the same scene in that one movie every single time.',
+  'Because the kitchen sounds different when you’re in it.',
+  'Because you check on me when I’m too quiet, and let me be when I’m not.',
 ];
 
 interface GenerateOpts {
@@ -50,11 +70,42 @@ export async function generateLoveReason({
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     logger.warn('[LoveReason] GEMINI_API_KEY not set, using fallback bank');
+    recordOutcome('reason', 'fallback');
     return pickFallback(recentReasons);
   }
 
-  const promptText = buildPrompt(senderName, recipientName, recentReasons);
+  // First attempt — vanilla prompt.
+  const firstAttempt = await callGemini(apiKey, buildPrompt(senderName, recipientName, recentReasons));
+  if (firstAttempt === null) {
+    recordOutcome('reason', 'fallback');
+    return pickFallback(recentReasons);
+  }
 
+  const decision1 = humanize(firstAttempt, { context: 'reason' });
+  if (decision1.kind === 'pass') return decision1.text;
+
+  if (decision1.kind === 'retry') {
+    // Second attempt — prompt with the focused anti-pattern hint.
+    const retryPrompt = buildPrompt(senderName, recipientName, recentReasons, decision1.hint);
+    const secondAttempt = await callGemini(apiKey, retryPrompt);
+    if (secondAttempt !== null) {
+      const decision2 = humanize(secondAttempt, { context: 'reason' });
+      if (decision2.kind === 'pass') {
+        recordOutcome('reason', 'retry-humanized');
+        return decision2.text;
+      }
+      // If the retry also fails to humanize cleanly, fall back. We do NOT
+      // attempt a third Gemini call — bounded cost is more important than
+      // squeezing one more shot at Gemini cooperating.
+    }
+  }
+
+  // decision1 was 'reject' OR the retry path also failed.
+  recordOutcome('reason', 'fallback');
+  return pickFallback(recentReasons);
+}
+
+async function callGemini(apiKey: string, prompt: string): Promise<string | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -63,7 +114,7 @@ export async function generateLoveReason({
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: promptText }] }],
+        contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: 0.9,
           topP: 0.95,
@@ -87,40 +138,27 @@ export async function generateLoveReason({
       const body = await res.text().catch(() => '<no body>');
       logger.warn(
         { status: res.status, body: body.slice(0, 200) },
-        '[LoveReason] Gemini API returned non-OK, using fallback'
+        '[LoveReason] Gemini API returned non-OK'
       );
-      return pickFallback(recentReasons);
+      return null;
     }
 
     const json = (await res.json()) as any;
     const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
 
     if (typeof text !== 'string' || !text.trim()) {
-      logger.warn({ json }, '[LoveReason] Gemini returned empty/invalid, using fallback');
-      return pickFallback(recentReasons);
+      logger.warn('[LoveReason] Gemini returned empty/invalid response');
+      return null;
     }
 
-    const cleaned = cleanReason(text);
-    // Sanity bounds: anything too short or absurdly long means the model
-    // got confused. Fall back rather than send something weird.
-    // 220 char hard ceiling: Today's Reason card uses serifQuote at fontSize 18
-    // / lineHeight 26 with a thin rose bar on the left, so it has slightly more
-    // breathing room than the daily-thought card but still wants to stay under
-    // ~4 lines. Anything longer than 220 chars is also probably Gemini drifting
-    // off-prompt — fall back rather than display a runaway sentence.
-    if (cleaned.length < 10 || cleaned.length > 220) {
-      logger.warn({ length: cleaned.length, preview: cleaned.slice(0, 80) }, '[LoveReason] Gemini output out of bounds, using fallback');
-      return pickFallback(recentReasons);
-    }
-
-    return cleaned;
+    return text;
   } catch (err: any) {
     if (err?.name === 'AbortError') {
-      logger.warn('[LoveReason] Gemini request timed out, using fallback');
+      logger.warn('[LoveReason] Gemini request timed out');
     } else {
-      logger.warn({ err: err?.message }, '[LoveReason] Gemini request failed, using fallback');
+      logger.warn({ err: err?.message }, '[LoveReason] Gemini request failed');
     }
-    return pickFallback(recentReasons);
+    return null;
   } finally {
     clearTimeout(timer);
   }
@@ -129,7 +167,8 @@ export async function generateLoveReason({
 function buildPrompt(
   senderName: string,
   recipientName: string,
-  recentReasons: string[]
+  recentReasons: string[],
+  antiPatternHint?: string
 ): string {
   const recentBlock =
     recentReasons.length > 0
@@ -138,30 +177,33 @@ function buildPrompt(
           .join('\n')}`
       : '';
 
-  return `You write a single daily "love reason" for a private app used by couples — a small sincere note sent from one partner to the other.
+  const hintBlock = antiPatternHint
+    ? `\n\nYour previous response had patterns to avoid. ${antiPatternHint}\n\nWrite a fresh response that fixes those issues.`
+    : '';
 
-From: ${senderName}
-To: ${recipientName}
+  // The prompt is deliberately voice-focused, not topic-focused. We tell
+  // Gemini WHO the speaker is (one partner texting the other) and what to
+  // sound like, then list the formal anti-patterns to avoid. The
+  // humanizer pipeline catches what slips through.
+  return `You're writing a single short "reason I love you" line for a private couples app. ${senderName} is sending this to ${recipientName}.
 
-Write ONE fresh reason. Rules:
-- 1 sentence, between 70 and 180 characters total — this is a hard constraint, not a guideline
-- Warm and specific, not generic
-- Sound like a real person — never a Hallmark card or greeting card cliche
-- Address ${recipientName} directly using "you"
-- Avoid clichés like "the love of my life", "you complete me", "the missing piece"
-- Be a little unexpected or surprising in detail
+Imagine one partner texting the other a small specific thing they love about them. It should feel like a real human wrote it on their phone, not a greeting card.
 
-Return ONLY the reason text. No quotes, no preamble, no labels, no explanation.${recentBlock}`;
-}
+Rules:
+- One sentence. Roughly 50–180 characters.
+- Address ${recipientName} directly with "you". Start the sentence with "Because".
+- Be SPECIFIC — a real small detail (a habit, a sound, a tiny moment), not an abstract feeling.
+- Sound casual and conversational, the way you'd actually text someone.
 
-function cleanReason(text: string): string {
-  // Strip whitespace, leading/trailing quotes or asterisks, and any "Reason:"-style label the model might
-  // have ignored our "no preamble" instruction and added anyway.
-  return text
-    .trim()
-    .replace(/^["'`*\s]+|["'`*\s]+$/g, '')
-    .replace(/^(reason|love reason|here'?s? (a|one|your)?( a)? reason)\s*:?\s*/i, '')
-    .trim();
+Avoid these patterns:
+- No em-dashes (—). Use commas or periods.
+- No semicolons. Use periods.
+- No "X isn't Y, it's Z" antithetical structures.
+- No words like: soulmate, commitment, perseverance, the journey, the foundation, the chapter, the work of love, ride or die.
+- Don't end with motivational appendages like "every single day" or "always" or "forever".
+- Avoid stock phrases: "the love of my life", "you complete me", "you're my everything", "the missing piece".${hintBlock}
+
+Return ONLY the reason text. No quotes, no labels, no explanation.${recentBlock}`;
 }
 
 function pickFallback(recentReasons: string[]): string {

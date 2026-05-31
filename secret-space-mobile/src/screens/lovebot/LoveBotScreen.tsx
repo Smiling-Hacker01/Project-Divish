@@ -10,6 +10,7 @@ import { useTheme } from '@/theme';
 import { lovebotApi } from '@/api';
 import { LoveBotSettings, LoveBotReason } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
+import { loveBotInfo } from '@/copy';
 
 // Partner's first name only — keeps the section header compact even when the
 // stored partner name is "Vishal Singh Kushwaha" or similar. Falls back to a
@@ -109,11 +110,15 @@ export function LoveBotScreen() {
         rightActions={[{ icon: 'info', onPress: () => setInfoOpen(true) }]}
       />
       <ScrollView
+        // Outer gap was 16dp — bumped to 20dp for a calmer vertical rhythm.
+        // Major section breaks (Schedule → Partner Access → Queue → Up Next)
+        // get an additional marginTop on their overline to push past this
+        // baseline gap.
         contentContainerStyle={{
           paddingHorizontal: theme.screenPadding,
           paddingTop: 8,
           paddingBottom: theme.bottomNavReserve + 16,
-          gap: 16,
+          gap: 20,
         }}
         showsVerticalScrollIndicator={false}
       >
@@ -128,20 +133,20 @@ export function LoveBotScreen() {
             </LinearGradient>
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text variant="h3" style={{ fontSize: 18 }}>
-                Sweet messages on autopilot
+                Your reasons, on a schedule.
               </Text>
               <Text variant="bodySmall" color="muted" style={{ marginTop: 4 }}>
-                Schedule reasons your partner will receive without you lifting a finger.
+                {loveBotInfo.intro}
               </Text>
             </View>
           </View>
         </Card>
 
-        {/* Mode picker */}
-        <Text variant="overline" color="muted" style={{ marginTop: 8 }}>
+        {/* ─── SCHEDULE ─────────────────────────────────────────────── */}
+        <Text variant="overline" color="muted" style={styles.sectionOverline}>
           Schedule
         </Text>
-        <View style={{ gap: 12 }}>
+        <View style={{ gap: 10 }}>
           {(
             [
               { key: 'off', label: 'Off', helper: 'No automatic messages.', icon: 'pause' },
@@ -236,19 +241,31 @@ export function LoveBotScreen() {
           })}
         </View>
 
+        {/* ─── PARTNER ACCESS ──────────────────────────────────────────
+            Pulled out of the Schedule section because it isn't a schedule
+            knob — it's a permission that affects who else can contribute
+            to the queue. Inline variant of SwitchRow strips the card chrome
+            so this row reads as "section content" rather than "another
+            mode card", which was the source of the prior visual squeeze. */}
+        <Text variant="overline" color="muted" style={styles.sectionOverline}>
+          Partner access
+        </Text>
         <SwitchRow
+          variant="inline"
           label="Let them add reasons too"
-          description="Your partner can contribute to the queue."
+          description="Your partner can drop reasons into the queue."
           value={settings?.userBAccessGranted ?? false}
           onValueChange={togglePartner}
         />
 
-        {/* Direction-aware section header. The bot you configure on this screen
-            sends reasons FROM you TO your partner — making that direction
-            explicit (rather than calling it generically "Your reasons") makes
-            the queue's purpose obvious and pre-empts the most common confusion
-            about why your own Home screen doesn't show what's in this list. */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+        {/* ─── YOU → {partner} (queue) ──────────────────────────────────
+            Direction-aware section header. The bot you configure on this
+            screen sends reasons FROM you TO your partner — making that
+            direction explicit (rather than calling it generically "Your
+            reasons") makes the queue's purpose obvious and pre-empts the
+            most common confusion about why your own Home screen doesn't
+            show what's in this list. */}
+        <View style={[styles.sectionOverlineRow, styles.sectionOverline]}>
           <Text variant="overline" color="muted" style={{ flex: 1 }}>
             You → {partnerFirstName}
           </Text>
@@ -311,24 +328,28 @@ export function LoveBotScreen() {
           >
             <Feather name="feather" size={20} color={theme.colors.muted} style={{ marginBottom: 8 }} />
             <Text variant="bodySmall" color="muted" align="center" style={{ lineHeight: 20 }}>
-              Your queue is empty. {partnerFirstName} will still receive an auto-written reason at the scheduled time — add your own to send something personal instead.
+              The queue is empty. {partnerFirstName} will still get one at the scheduled time, written for you. Add your own to send something personal instead.
             </Text>
           </View>
         )}
 
         <Button label="Add a reason" leadingIcon="plus" fullWidth onPress={() => navigation.navigate('AddReason')} />
 
-        {/* Up Next preview — mirrors what the cron will pick at the next delivery
-            window. Backend already returns reasons[] filtered to unused + ordered
-            ASC by createdAt, so reasons[0] is the actual next-to-deliver row.
-            When the queue is empty we don't fabricate a preview — the cron will
-            auto-generate a fresh Gemini line at delivery time and the user can't
-            know its text in advance, so we surface that fact honestly. */}
-        <Card variant="tinted-gold" style={{ marginTop: 8 }}>
-          <Text variant="overline" color="muted">
-            Up next
-          </Text>
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginTop: 12 }}>
+        {/* ─── UP NEXT ──────────────────────────────────────────────────
+            Elevated the section label out of the card into a proper
+            overline so it shares hierarchy with Schedule / Partner Access /
+            queue header instead of looking like a card-internal caption.
+            Backend already returns reasons[] filtered to unused + ordered
+            ASC by createdAt, so reasons[0] is the actual next-to-deliver
+            row. When the queue is empty we don't fabricate a preview —
+            the cron will auto-generate a fresh Gemini line at delivery
+            time and the user can't know its text in advance, so we
+            surface that fact honestly. */}
+        <Text variant="overline" color="muted" style={styles.sectionOverline}>
+          Up next
+        </Text>
+        <Card variant="tinted-gold">
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
             <View style={[styles.appIcon, { backgroundColor: theme.colors.surface, marginTop: 2 }]}>
               <Feather name="heart" size={14} color={theme.colors.primary} />
             </View>
@@ -388,31 +409,13 @@ export function LoveBotScreen() {
               </Text>
             </View>
             <Text variant="bodySmall" color="muted" style={{ marginBottom: 20 }}>
-              A gentle little nudge that sends your partner one of the reasons you love
-              them — automatically, without you ever forgetting.
+              {loveBotInfo.intro}
             </Text>
 
-            <InfoRow
-              icon="clock"
-              title="Daily mode"
-              body="One reason is delivered at the same time every day. Predictable, dependable, like a morning coffee for the heart."
-            />
-            <InfoRow
-              icon="star"
-              title="Surprise mode"
-              body="Random delivery throughout the week — never know when, but always when it's needed."
-            />
-            <InfoRow
-              icon="users"
-              title="Both can contribute"
-              body="Toggle 'Let them add reasons too' and your partner can drop their own reasons into the queue — a private collaboration."
-            />
-            <InfoRow
-              icon="bell"
-              title="How it's delivered"
-              body="Each reason arrives as a push notification on your partner's phone, and shows on their Home screen for the day."
-              last
-            />
+            <InfoRow icon="clock" title="Daily" body={loveBotInfo.modes.daily} />
+            <InfoRow icon="star" title="Surprise" body={loveBotInfo.modes.surprise} />
+            <InfoRow icon="users" title="Both can add" body={loveBotInfo.modes.contribute} />
+            <InfoRow icon="bell" title="How it lands" body={loveBotInfo.modes.delivery} last />
 
             <Button
               label="Got it"
@@ -565,10 +568,26 @@ function timeToDate(hhmm?: string): Date {
 
 const styles = StyleSheet.create({
   botAvatar: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
+  // Section overlines sit between the outer ScrollView's 20dp gap and the
+  // section content. The extra marginTop of 8dp creates a clear 28dp
+  // visual break between major sections (Schedule, Partner Access, Queue,
+  // Up Next) without needing dividers — the labels themselves carry the
+  // hierarchy.
+  sectionOverline: {
+    marginTop: 8,
+  },
+  sectionOverlineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   modeCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    minHeight: 72,
+    // Tightened from 72 → 64 so the three stacked mode cards read lighter
+    // and the whole Schedule section sits less heavy on the screen. With
+    // the icon at 22 + 16dp paddingHorizontal + bodyMedium label + helper
+    // bodySmall, 64dp is comfortable.
+    minHeight: 64,
     paddingHorizontal: 16,
     borderRadius: 20,
   },

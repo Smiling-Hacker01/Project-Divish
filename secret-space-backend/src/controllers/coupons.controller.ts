@@ -4,6 +4,24 @@ import logger from '../config/logger';
 import { createCouponSchema, updateCouponStatusSchema, couponReviewSchema } from '../utils/validators';
 import { sendPush } from '../services/notification.service';
 import { io } from '../websockets/chat.gateway';
+import { couponCreated, couponRedeemed, couponApproved, couponFulfilled } from '../copy/notifications';
+
+/**
+ * Resolve a user's display name for push notification copy. Returns the
+ * stored name when available, or a neutral fallback. Always resolves —
+ * never throws — so call sites can use it inline without try/catch and a
+ * transient DB hiccup never breaks a controller's success path on its way
+ * to dispatching a (best-effort) push notification.
+ */
+async function nameOf(userId: string): Promise<string> {
+  try {
+    const u = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
+    return u?.name ?? 'Your partner';
+  } catch (err: any) {
+    logger.warn({ err: err?.message, userId }, '[Coupon] nameOf lookup failed, using fallback');
+    return 'Your partner';
+  }
+}
 
 // ── Realtime helper ────────────────────────────────────────────────────────────
 // Emits `coupon_changed` to the couple's socket room so both partners' coupon lists
@@ -131,10 +149,11 @@ export const createCoupon = async (req: Request, res: Response, next: NextFuncti
     broadcastCouponChange(coupleId, { action: 'created', couponId: coupon.id });
 
     // Notify the recipient about the new coupon
+    const createdPush = couponCreated(await nameOf(userId));
     await sendPush(
       partnerId,
-      '🎟️ New Coupon!',
-      "You've received a new coupon 💌 Tap to explore and redeem it anytime!",
+      createdPush.title,
+      createdPush.body ?? '',
       { url: '/coupons' }
     ).catch(e => console.error('[Push Error] Coupon creation:', e));
 
@@ -235,30 +254,25 @@ export const updateStatus = async (req: Request, res: Response, next: NextFuncti
 
     // ── Send Push Notification based on lifecycle stage ──────────────────────
     try {
+      // In every case below the actor (the user who triggered the transition)
+      // is the current request's authenticated user; we surface their name to
+      // the OTHER partner in the notification.
+      const actorName = await nameOf(userId);
       if (status === 'pending') {
         // Recipient redeemed it -> notify the Creator
-        await sendPush(
-          coupon.creatorId,
-          '💌 Coupon Redeemed!',
-          'Your partner just redeemed a coupon 💌 Time to make it special!',
-          { url: `/coupons` }
-        );
+        const push = couponRedeemed(actorName);
+        await sendPush(coupon.creatorId, push.title, push.body ?? '', { url: `/coupons` });
       } else if (status === 'used') {
         // Creator approved it -> notify the Recipient
-        await sendPush(
-          coupon.recipientId,
-          '✨ Redemption Approved!',
-          'Your partner approved your coupon! It will be fulfilled soon.',
-          { url: `/coupons` }
-        );
+        const push = couponApproved(actorName);
+        await sendPush(coupon.recipientId, push.title, push.body ?? '', { url: `/coupons` });
       } else if (status === 'fulfilled') {
-        // Creator fulfilled it -> notify the Recipient
-        await sendPush(
-          coupon.recipientId,
-          '🎉 Coupon Fulfilled!',
-          'Your partner has worked their magic! Hope you enjoyed the coupon.',
-          { url: `/coupons` }
-        );
+        // Creator fulfilled it -> notify the Recipient (this branch is unused
+        // in practice — fulfillment goes through the dedicated /fulfill
+        // endpoint below — but kept here for completeness if a future code
+        // path routes through this controller).
+        const push = couponFulfilled(actorName);
+        await sendPush(coupon.recipientId, push.title, push.body ?? '', { url: `/coupons` });
       }
     } catch (e: any) {
       console.error('[Push Error] Coupon lifecycle:', e);
@@ -309,11 +323,12 @@ export const fulfillCoupon = async (req: Request, res: Response, next: NextFunct
 
     broadcastCouponChange(coupleId, { action: 'fulfilled', couponId: id });
 
-    // Notify the recipient that the coupon has been fulfilled + prompt for review
+    // Notify the recipient that the coupon has been fulfilled
+    const fulfilledPush = couponFulfilled(await nameOf(userId));
     await sendPush(
       coupon.recipientId,
-      '✨ Coupon Fulfilled!',
-      'Your coupon has been fulfilled ✨ Share your experience and help your partner make it even more special next time!',
+      fulfilledPush.title,
+      fulfilledPush.body ?? '',
       { url: '/coupons' }
     ).catch(e => console.error('[Push Error] Coupon fulfillment:', e));
 
