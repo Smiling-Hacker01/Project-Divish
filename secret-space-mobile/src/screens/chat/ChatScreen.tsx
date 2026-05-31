@@ -33,7 +33,7 @@ import {
   decryptAESKeyWithRSA,
   decryptTextAES,
 } from '@/services/encryption';
-import { getOrCreateKeyPair, ensurePublicKeyRegistered } from '@/services/cryptoIdentity';
+import { getOrCreateKeyPair, ensurePublicKeyRegistered, getKeypairCreatedAt } from '@/services/cryptoIdentity';
 import { chatQueue, ChatQueueEntry } from '@/services/chatQueue';
 
 const QUICK_REACTIONS = ['❤️', '😂', '😮', '😢', '😠', '🔥'];
@@ -77,6 +77,10 @@ export function ChatScreen() {
   // a value show "Decrypting…" instead. This mirrors the web client.
   const [decryptedCache, setDecryptedCache] = useState<Record<string, string>>({});
   const [myKeys, setMyKeys] = useState<{ publicKey: string; privateKey: string } | null>(null);
+  // Timestamp at which the currently-active keypair was first held on this
+  // device. Loaded once at mount. Messages older than this can't be
+  // decrypted by us — see the decrypt pump for why.
+  const [keypairCreatedAt, setKeypairCreatedAt] = useState<string | null>(null);
   const [partnerPubKey, setPartnerPubKey] = useState<string | null>(null);
   const [cryptoReady, setCryptoReady] = useState(false);
 
@@ -151,6 +155,14 @@ export function ChatScreen() {
         const keys = await getOrCreateKeyPair();
         if (cancelled) return;
         setMyKeys(keys);
+
+        // Pull the keypair-birth timestamp once at mount. The decrypt pump
+        // reads this synchronously to classify any failure as "legacy
+        // (expected)" or "real bug (unexpected)" — see the catch block in
+        // the decrypt useEffect below.
+        getKeypairCreatedAt().then((ts) => {
+          if (!cancelled) setKeypairCreatedAt(ts);
+        });
 
         // Re-register on every chat open (cheap, idempotent) so a partner who just
         // reinstalled immediately sees an up-to-date pub key when they query.
@@ -263,8 +275,29 @@ export function ChatScreen() {
           const plain = await decryptTextAES(msg.content!, aesKey);
           updates[msg.id] = plain;
         } catch (err) {
-          if (__DEV__) console.log('[Chat] Decrypt error for', msg.id, err);
-          updates[msg.id] = '🚫 Decryption Error';
+          // Classify: was this message authored BEFORE the device's current
+          // keypair was created? If so, the failure is expected — the AES key
+          // was wrapped to the previous public key and the matching private
+          // key is gone (likely a reinstall or APK signing-key change wiped
+          // SecureStore). Show the user a soft, honest line instead of a
+          // scary "Decryption Error". If the message is NEWER than our
+          // keypair birth, this is a real bug — we still surface the same
+          // friendly copy to the user (no scary technical messages reach
+          // them per product direction) but we ALSO log the full error so
+          // it shows up in console / Sentry-equivalent for investigation.
+          const isLegacy =
+            keypairCreatedAt !== null &&
+            !!msg.createdAt &&
+            new Date(msg.createdAt).getTime() < new Date(keypairCreatedAt).getTime();
+          if (!isLegacy) {
+            console.error(
+              '[Chat] Decryption failed for a post-keypair message — this is unexpected and worth investigating:',
+              { messageId: msg.id, createdAt: msg.createdAt, keypairCreatedAt, error: err }
+            );
+          } else if (__DEV__) {
+            console.log('[Chat] Legacy message (pre-keypair) failed to decrypt:', msg.id);
+          }
+          updates[msg.id] = '__LOCKED__';
         }
       }
       if (!cancelled && Object.keys(updates).length > 0) {
@@ -275,7 +308,7 @@ export function ChatScreen() {
     return () => {
       cancelled = true;
     };
-  }, [messages, myKeys, user?.id, decryptedCache]);
+  }, [messages, myKeys, user?.id, decryptedCache, keypairCreatedAt]);
 
   // ── Socket event wiring ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -1713,20 +1746,30 @@ function Bubble({
       </View>
     );
   } else {
-    // Text bubble — show plaintext from the decryption cache, "Decrypting…" otherwise.
-    const text =
-      plaintext !== undefined
+    // Text bubble — three states:
+    //   - plaintext set, not __LOCKED__: render normally
+    //   - plaintext set to the __LOCKED__ sentinel: render the friendly
+    //     "Locked. Sent from a previous device." copy in italic + muted
+    //     styling. No scary lock emoji, no "decryption error" wording —
+    //     the failure is honestly communicated as a key-rotation artifact
+    //     rather than as something broken.
+    //   - plaintext undefined: still decrypting, show italic placeholder.
+    const locked = plaintext === '__LOCKED__';
+    const text = locked
+      ? 'Locked. Sent from a previous device.'
+      : plaintext !== undefined
         ? plaintext
         : msg.content === null
           ? ''
-          : '🔒 Decrypting…';
+          : 'Decrypting…';
+    const isPlaceholder = locked || (plaintext === undefined && msg.content !== null);
     inner = (
       <Text
         variant="body"
         style={{
           color: mine ? '#fff' : theme.colors.foreground,
-          fontStyle: plaintext === undefined && msg.content !== null ? 'italic' : 'normal',
-          opacity: plaintext === undefined && msg.content !== null ? 0.7 : 1,
+          fontStyle: isPlaceholder ? 'italic' : 'normal',
+          opacity: isPlaceholder ? 0.7 : 1,
         }}
       >
         {text}
