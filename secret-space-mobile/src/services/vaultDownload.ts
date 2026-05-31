@@ -1,7 +1,6 @@
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { Linking, Platform } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { toast } from '@/components/Toast';
 
 /**
@@ -17,21 +16,22 @@ import { toast } from '@/components/Toast';
  *      land in a discoverable place inside Photos / Gallery.
  *   4. Delete the cache copy so we don't leak storage as users save more.
  *
- * Dedup: vault items are content-immutable once uploaded (the backend never
- * rewrites a Cloudinary URL after creation), so we cache the saved state
- * per-itemId in AsyncStorage. A second "Save" tap on the same item is a
- * no-op that shows a friendlier "Already in your gallery." toast instead of
- * downloading again. AsyncStorage is per-install, so a reinstall clears the
- * cache and lets the user re-save — which is the correct semantic (we
- * don't have a way to detect whether the OS asset still exists after a
- * reinstall, so re-allowing the save is safer than blocking it).
+ * Re-download policy: the service does NOT track whether an item has been
+ * saved before. Each call performs a full download + asset creation. On both
+ * Android (MediaStore) and iOS (PHPhotoLibrary), each save call produces a
+ * fresh OS asset — neither platform performs content-based deduplication,
+ * which is the right behavior here: a user who taps Save again deliberately
+ * wants another copy in their gallery (e.g. they deleted the original from
+ * their gallery and want it back, or they want it filed into a different
+ * album). The previous AsyncStorage-backed dedup was a feature-leakage from
+ * a one-time-save design; users reported they wanted re-download to work,
+ * and the service now defers entirely to the OS gallery's behavior.
  *
  * Errors are translated into in-voice toast copy at every failure point —
  * raw network errors / native exceptions are never surfaced.
  */
 
 const ALBUM_NAME = 'Secret Space';
-const SAVED_KEY_PREFIX = 'vault:downloaded:';
 
 export interface DownloadOptions {
   itemId: string;
@@ -51,9 +51,16 @@ export interface DownloadOptions {
 }
 
 export interface DownloadResult {
-  status: 'saved' | 'already-saved' | 'permission-denied' | 'error';
-  /** Whether the duplicate-detection bailed us out before any network. */
-  alreadySaved?: boolean;
+  /**
+   * 'saved'             — asset successfully landed in the gallery
+   * 'permission-denied' — user has not granted media-library write access
+   * 'error'             — network failure or MediaLibrary failure
+   *
+   * The 'already-saved' status that earlier versions returned has been
+   * removed along with the AsyncStorage dedup. The bulk caller continues to
+   * destructure for it defensively but the service no longer emits it.
+   */
+  status: 'saved' | 'permission-denied' | 'error';
 }
 
 /**
@@ -63,19 +70,7 @@ export interface DownloadResult {
 export async function downloadToGallery(opts: DownloadOptions): Promise<DownloadResult> {
   const { itemId, url, type, onProgress, suppressToast = false } = opts;
 
-  // 1. Dedup check — if we've already saved this item from this install,
-  //    short-circuit. Stored key is a per-item bool, no payload needed.
-  try {
-    const savedFlag = await AsyncStorage.getItem(SAVED_KEY_PREFIX + itemId);
-    if (savedFlag === '1') {
-      if (!suppressToast) toast.info('Already in your gallery.');
-      return { status: 'already-saved', alreadySaved: true };
-    }
-  } catch {
-    // Non-fatal — AsyncStorage failure shouldn't block the download.
-  }
-
-  // 2. Permission. We request 'writeOnly' so users on Android 13+ get the
+  // 1. Permission. We request 'writeOnly' so users on Android 13+ get the
   //    narrower scoped grant (we never need to READ their gallery).
   const perm = await MediaLibrary.requestPermissionsAsync(true);
   if (perm.status !== 'granted') {
@@ -85,7 +80,7 @@ export async function downloadToGallery(opts: DownloadOptions): Promise<Download
     return { status: 'permission-denied' };
   }
 
-  // 3. Download to cache. Cloudinary streams it; we report progress as a
+  // 2. Download to cache. Cloudinary streams it; we report progress as a
   //    fraction so the caller can spin a percentage ring.
   const ext = type === 'video' ? 'mp4' : 'jpg';
   const safeId = itemId.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -116,7 +111,7 @@ export async function downloadToGallery(opts: DownloadOptions): Promise<Download
     return { status: 'error' };
   }
 
-  // 4. Hand off to MediaLibrary. createAssetAsync places the file in the
+  // 3. Hand off to MediaLibrary. createAssetAsync places the file in the
   //    OS-managed gallery directory; addAssetsToAlbumAsync drops a reference
   //    into our named album so the user can find their saved items.
   try {
@@ -139,7 +134,6 @@ export async function downloadToGallery(opts: DownloadOptions): Promise<Download
       // camera roll.
     }
 
-    await AsyncStorage.setItem(SAVED_KEY_PREFIX + itemId, '1').catch(() => undefined);
     if (!suppressToast) {
       toast.success(type === 'video' ? 'Video saved to your gallery.' : 'Saved to your gallery.');
     }
@@ -148,7 +142,7 @@ export async function downloadToGallery(opts: DownloadOptions): Promise<Download
     if (!suppressToast) toast.error("Couldn't save to your gallery.");
     return { status: 'error' };
   } finally {
-    // 5. Clean up the cache copy regardless of save outcome. If MediaLibrary
+    // 4. Clean up the cache copy regardless of save outcome. If MediaLibrary
     //    succeeded, the OS already has its own copy; ours is redundant. If it
     //    failed, the cache copy is useless. Either way, free the bytes.
     if (Platform.OS !== 'web') {
@@ -158,14 +152,15 @@ export async function downloadToGallery(opts: DownloadOptions): Promise<Download
 }
 
 /**
- * Has this device already saved this vault item to the gallery? Used by the
- * UI to swap the action label / icon (Save → Saved checkmark) without
- * triggering an actual download.
+ * Legacy helper retained for backwards compatibility with the Lightbox UI
+ * code that imported it. The service no longer tracks per-item save state,
+ * so this always returns false. Safe to remove once all callers are
+ * cleaned up.
+ *
+ * @deprecated The save-state dedup has been removed to allow re-downloads.
+ *   Callers should drop the "already downloaded" UI hint and always render
+ *   the Save affordance as available.
  */
-export async function hasBeenDownloaded(itemId: string): Promise<boolean> {
-  try {
-    return (await AsyncStorage.getItem(SAVED_KEY_PREFIX + itemId)) === '1';
-  } catch {
-    return false;
-  }
+export async function hasBeenDownloaded(_itemId: string): Promise<boolean> {
+  return false;
 }
