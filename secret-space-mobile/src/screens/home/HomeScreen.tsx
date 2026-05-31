@@ -8,6 +8,7 @@ import * as FileSystem from 'expo-file-system';
 import { ScreenContainer, InlineHeader, Text, Card, Avatar, Chip, BondHeart, Emoji } from '@/components';
 import { useTheme } from '@/theme';
 import { dashboardApi, settingsApi, tokens } from '@/api';
+import { errors } from '@/copy';
 import { DashboardData, Mood } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
 import { useChatSocket } from '@/context/ChatSocketContext';
@@ -165,9 +166,9 @@ export function HomeScreen() {
     } catch (err: any) {
       const status = err?.response?.status;
       if (status === 429) {
-        // Warm in-voice copy — see Batch 3 design discussion. No technical
+        // In-voice cooldown copy from the central copy module. No technical
         // "rate limit exceeded" text reaches the user.
-        setReasonCooldownMessage("Give me a moment, I'm thinking of something special for you 💕");
+        setReasonCooldownMessage(errors.cooldown);
         Animated.timing(cooldownFade, {
           toValue: 1,
           duration: 220,
