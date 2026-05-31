@@ -22,7 +22,7 @@ import { vaultApi } from '@/api';
 import { VaultItem } from '@/types/api';
 import { vaultQueue, VaultQueueEntry } from '@/services/vaultQueue';
 import { vaultUploadManager, ManagerState } from '@/services/vaultUploadManager';
-import { downloadToGallery, hasBeenDownloaded } from '@/services/vaultDownload';
+import { downloadToGallery } from '@/services/vaultDownload';
 import { thumbUrl, fullUrl } from '@/utils/cloudinary';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -42,7 +42,6 @@ export function VaultGridScreen() {
   // delete" without entering the lightbox. Faster than the
   // tap-open-tap-action sequence for users who know what they want.
   const [actionSheetItem, setActionSheetItem] = useState<VaultItem | null>(null);
-  const [actionSheetSaved, setActionSheetSaved] = useState(false);
   const [actionSheetSaving, setActionSheetSaving] = useState(false);
   const [showUploadSheet, setShowUploadSheet] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
@@ -143,23 +142,12 @@ export function VaultGridScreen() {
     reload();
   }, [reload]);
 
-  // Each time a new action-sheet item opens, refresh the "already saved"
-  // flag so the sheet shows "Saved to gallery" instead of "Save to gallery"
-  // for items the user has already downloaded.
+  // Each time the action sheet opens or closes, reset the in-flight saving
+  // flag so a fresh open never shows a stale "Saving…" label. We no longer
+  // track per-item "already saved" state — the service now allows
+  // re-downloads on every tap, so the sheet always offers Save.
   useEffect(() => {
-    let disposed = false;
-    if (actionSheetItem) {
-      setActionSheetSaving(false);
-      hasBeenDownloaded(actionSheetItem.id).then((flag) => {
-        if (!disposed) setActionSheetSaved(flag);
-      });
-    } else {
-      setActionSheetSaved(false);
-      setActionSheetSaving(false);
-    }
-    return () => {
-      disposed = true;
-    };
+    setActionSheetSaving(false);
   }, [actionSheetItem?.id]);
 
   // Slide the bulk action bar in / out whenever we enter or leave select
@@ -221,7 +209,6 @@ export function VaultGridScreen() {
     setBulkProgress({ current: 0, total: targets.length });
 
     let saved = 0;
-    let alreadySaved = 0;
     let failed = 0;
     let permissionDenied = false;
 
@@ -239,7 +226,6 @@ export function VaultGridScreen() {
         suppressToast: true,
       });
       if (result.status === 'saved') saved++;
-      else if (result.status === 'already-saved') alreadySaved++;
       else if (result.status === 'permission-denied') {
         permissionDenied = true;
         break;
@@ -255,13 +241,10 @@ export function VaultGridScreen() {
       return;
     }
 
-    // Compose a single aggregated result toast. Don't pluralize awkwardly —
-    // for the common case (everything saved cleanly) we just say "Saved N."
-    if (failed === 0 && alreadySaved === 0) {
+    // Compose a single aggregated result toast.
+    if (failed === 0) {
       toast.success(`Saved ${saved} to your gallery.`);
-    } else if (failed === 0) {
-      toast.success(`Saved ${saved}. ${alreadySaved} were already in your gallery.`);
-    } else if (saved === 0 && alreadySaved === 0) {
+    } else if (saved === 0) {
       toast.error(`Couldn't save any. Try again on a better connection.`);
     } else {
       toast.info(`Saved ${saved} of ${targets.length}. ${failed} failed.`);
@@ -316,18 +299,15 @@ export function VaultGridScreen() {
   const handleSheetSave = useCallback(async () => {
     if (!actionSheetItem || actionSheetSaving) return;
     setActionSheetSaving(true);
-    const result = await downloadToGallery({
+    await downloadToGallery({
       itemId: actionSheetItem.id,
       url: actionSheetItem.url,
       type: actionSheetItem.type,
     });
     setActionSheetSaving(false);
-    if (result.status === 'saved' || result.status === 'already-saved') {
-      setActionSheetSaved(true);
-    }
-    // Dismiss the sheet either way — the toast surfaced by downloadToGallery
-    // tells the user what happened. Permission-denied / error toasts also
-    // already render above the dismissed sheet.
+    // Dismiss the sheet — the toast surfaced by downloadToGallery tells the
+    // user what happened. Permission-denied / error toasts render above the
+    // dismissed sheet either way.
     setActionSheetItem(null);
   }, [actionSheetItem, actionSheetSaving]);
 
@@ -883,20 +863,14 @@ export function VaultGridScreen() {
               {actionSheetItem?.type === 'video' ? 'Video' : 'Photo'}
             </Text>
             <Text variant="bodySmall" color="muted" align="center" style={{ marginBottom: 20 }}>
-              {actionSheetSaved ? 'Already in your gallery.' : 'What would you like to do?'}
+              What would you like to do?
             </Text>
             <Button
-              label={
-                actionSheetSaving
-                  ? 'Saving…'
-                  : actionSheetSaved
-                    ? 'Saved to gallery'
-                    : 'Save to gallery'
-              }
-              leadingIcon={actionSheetSaved ? 'check' : 'download'}
+              label={actionSheetSaving ? 'Saving…' : 'Save to gallery'}
+              leadingIcon="download"
               fullWidth
               onPress={handleSheetSave}
-              disabled={actionSheetSaving || actionSheetSaved}
+              disabled={actionSheetSaving}
             />
             <Button
               label="Delete"
@@ -1061,7 +1035,6 @@ function Lightbox({
   // different lightbox slide because both flags are item-scoped.
   const [downloading, setDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
-  const [alreadyDownloaded, setAlreadyDownloaded] = useState(false);
 
   useEffect(() => {
     onIndexChange(currentIdx);
@@ -1080,23 +1053,13 @@ function Lightbox({
 
   const currentItem = items[currentIdx];
 
-  // When the visible item changes, refresh the "already saved" indicator so
-  // the icon flips from download → checkmark instantly on slides the user
-  // already saved. Cancellable via the disposed flag so a fast swipe doesn't
-  // land a stale state on the wrong slide.
+  // Reset per-item download state when the user pages to a different slide.
+  // We no longer track an "already saved" indicator — saves are always
+  // available, so the icon just shows the download glyph (or the percentage
+  // while a download is in flight).
   useEffect(() => {
-    let disposed = false;
     setDownloading(false);
     setDownloadProgress(0);
-    setAlreadyDownloaded(false);
-    if (currentItem) {
-      hasBeenDownloaded(currentItem.id).then((flag) => {
-        if (!disposed) setAlreadyDownloaded(flag);
-      });
-    }
-    return () => {
-      disposed = true;
-    };
   }, [currentItem?.id]);
 
   const onDownload = useCallback(
@@ -1104,16 +1067,13 @@ function Lightbox({
       if (downloading) return;
       setDownloading(true);
       setDownloadProgress(0);
-      const result = await downloadToGallery({
+      await downloadToGallery({
         itemId: item.id,
         url: item.url,
         type: item.type,
         onProgress: (fraction) => setDownloadProgress(fraction),
       });
       setDownloading(false);
-      if (result.status === 'saved' || result.status === 'already-saved') {
-        setAlreadyDownloaded(true);
-      }
     },
     [downloading]
   );
@@ -1188,8 +1148,6 @@ function Lightbox({
                 <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600' }}>
                   {Math.round(downloadProgress * 20) * 5}%
                 </Text>
-              ) : alreadyDownloaded ? (
-                <Feather name="check" size={20} color="#7DD3A7" />
               ) : (
                 <Feather name="download" size={20} color="#fff" />
               )}
