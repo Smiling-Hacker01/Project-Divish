@@ -21,6 +21,7 @@ import { vaultApi } from '@/api';
 import { VaultItem } from '@/types/api';
 import { vaultQueue, VaultQueueEntry } from '@/services/vaultQueue';
 import { vaultUploadManager, ManagerState } from '@/services/vaultUploadManager';
+import { downloadToGallery, hasBeenDownloaded } from '@/services/vaultDownload';
 import { thumbUrl, fullUrl } from '@/utils/cloudinary';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -36,6 +37,12 @@ export function VaultGridScreen() {
   const navigation = useNavigation<any>();
   const [items, setItems] = useState<VaultItem[]>([]);
   const [previewIdx, setPreviewIdx] = useState<number | null>(null);
+  // Long-press on a grid tile opens an action sheet for "save to gallery /
+  // delete" without entering the lightbox. Faster than the
+  // tap-open-tap-action sequence for users who know what they want.
+  const [actionSheetItem, setActionSheetItem] = useState<VaultItem | null>(null);
+  const [actionSheetSaved, setActionSheetSaved] = useState(false);
+  const [actionSheetSaving, setActionSheetSaving] = useState(false);
   const [showUploadSheet, setShowUploadSheet] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -118,6 +125,43 @@ export function VaultGridScreen() {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  // Each time a new action-sheet item opens, refresh the "already saved"
+  // flag so the sheet shows "Saved to gallery" instead of "Save to gallery"
+  // for items the user has already downloaded.
+  useEffect(() => {
+    let disposed = false;
+    if (actionSheetItem) {
+      setActionSheetSaving(false);
+      hasBeenDownloaded(actionSheetItem.id).then((flag) => {
+        if (!disposed) setActionSheetSaved(flag);
+      });
+    } else {
+      setActionSheetSaved(false);
+      setActionSheetSaving(false);
+    }
+    return () => {
+      disposed = true;
+    };
+  }, [actionSheetItem?.id]);
+
+  const handleSheetSave = useCallback(async () => {
+    if (!actionSheetItem || actionSheetSaving) return;
+    setActionSheetSaving(true);
+    const result = await downloadToGallery({
+      itemId: actionSheetItem.id,
+      url: actionSheetItem.url,
+      type: actionSheetItem.type,
+    });
+    setActionSheetSaving(false);
+    if (result.status === 'saved' || result.status === 'already-saved') {
+      setActionSheetSaved(true);
+    }
+    // Dismiss the sheet either way — the toast surfaced by downloadToGallery
+    // tells the user what happened. Permission-denied / error toasts also
+    // already render above the dismissed sheet.
+    setActionSheetItem(null);
+  }, [actionSheetItem, actionSheetSaving]);
 
   useFocusEffect(
     useCallback(() => {
@@ -299,7 +343,11 @@ export function VaultGridScreen() {
     ({ item, index }: { item: VaultItem; index: number }) => {
       const thumb = thumbUrl(item.thumbnailUrl ?? item.url, TILE_SIZE) ?? item.thumbnailUrl ?? item.url;
       return (
-        <Pressable onPress={() => setPreviewIdx(index)}>
+        <Pressable
+          onPress={() => setPreviewIdx(index)}
+          onLongPress={() => setActionSheetItem(item)}
+          delayLongPress={300}
+        >
           <View
             style={[
               styles.tile,
@@ -592,6 +640,54 @@ export function VaultGridScreen() {
         </Pressable>
       </Modal>
 
+      {/* Long-press action sheet for grid tiles. Faster than entering the
+          lightbox just to save or delete a single item — matches the
+          iOS Photos / Telegram convention where holding a thumbnail
+          reveals contextual actions. */}
+      <Modal
+        visible={actionSheetItem !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setActionSheetItem(null)}
+      >
+        <Pressable style={styles.scrim} onPress={() => setActionSheetItem(null)}>
+          <Pressable onPress={() => {}} style={[styles.sheet, { backgroundColor: theme.colors.surface }]}>
+            <View style={[styles.handle, { backgroundColor: theme.colors.hairlineStrong }]} />
+            <Text variant="h3" align="center" style={{ marginTop: 16, marginBottom: 4 }}>
+              {actionSheetItem?.type === 'video' ? 'Video' : 'Photo'}
+            </Text>
+            <Text variant="bodySmall" color="muted" align="center" style={{ marginBottom: 20 }}>
+              {actionSheetSaved ? 'Already in your gallery.' : 'What would you like to do?'}
+            </Text>
+            <Button
+              label={
+                actionSheetSaving
+                  ? 'Saving…'
+                  : actionSheetSaved
+                    ? 'Saved to gallery'
+                    : 'Save to gallery'
+              }
+              leadingIcon={actionSheetSaved ? 'check' : 'download'}
+              fullWidth
+              onPress={handleSheetSave}
+              disabled={actionSheetSaving || actionSheetSaved}
+            />
+            <Button
+              label="Delete"
+              leadingIcon="trash-2"
+              variant="destructive"
+              style={{ marginTop: 12 }}
+              fullWidth
+              onPress={() => {
+                const item = actionSheetItem;
+                setActionSheetItem(null);
+                if (item) confirmDelete(item, () => undefined);
+              }}
+            />
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* Swipeable lightbox */}
       {previewIdx !== null && items[previewIdx] && (
         <Lightbox
@@ -637,6 +733,11 @@ function Lightbox({
 }) {
   const [currentIdx, setCurrentIdx] = useState(initialIndex);
   const listRef = useRef<FlatList<VaultItem> | null>(null);
+  // Per-current-item download state. Resets each time the user pages to a
+  // different lightbox slide because both flags are item-scoped.
+  const [downloading, setDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [alreadyDownloaded, setAlreadyDownloaded] = useState(false);
 
   useEffect(() => {
     onIndexChange(currentIdx);
@@ -654,6 +755,44 @@ function Lightbox({
   }, [initialIndex]);
 
   const currentItem = items[currentIdx];
+
+  // When the visible item changes, refresh the "already saved" indicator so
+  // the icon flips from download → checkmark instantly on slides the user
+  // already saved. Cancellable via the disposed flag so a fast swipe doesn't
+  // land a stale state on the wrong slide.
+  useEffect(() => {
+    let disposed = false;
+    setDownloading(false);
+    setDownloadProgress(0);
+    setAlreadyDownloaded(false);
+    if (currentItem) {
+      hasBeenDownloaded(currentItem.id).then((flag) => {
+        if (!disposed) setAlreadyDownloaded(flag);
+      });
+    }
+    return () => {
+      disposed = true;
+    };
+  }, [currentItem?.id]);
+
+  const onDownload = useCallback(
+    async (item: VaultItem) => {
+      if (downloading) return;
+      setDownloading(true);
+      setDownloadProgress(0);
+      const result = await downloadToGallery({
+        itemId: item.id,
+        url: item.url,
+        type: item.type,
+        onProgress: (fraction) => setDownloadProgress(fraction),
+      });
+      setDownloading(false);
+      if (result.status === 'saved' || result.status === 'already-saved') {
+        setAlreadyDownloaded(true);
+      }
+    },
+    [downloading]
+  );
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
@@ -710,8 +849,26 @@ function Lightbox({
 
         <GlassSurface radius={28} style={styles.lightboxBar}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-around', padding: 12 }}>
-            <Pressable style={styles.lightboxAction} hitSlop={8}>
-              <Feather name="info" size={20} color="#fff" />
+            <Pressable
+              style={styles.lightboxAction}
+              hitSlop={8}
+              onPress={() => currentItem && onDownload(currentItem)}
+              disabled={!currentItem || downloading}
+              accessibilityRole="button"
+              accessibilityLabel="Save to gallery"
+            >
+              {downloading ? (
+                // While the download is in flight, show the percentage in
+                // place of the icon. Two-digit precision is overkill on a
+                // tiny lightbox action, so we round to the nearest 5%.
+                <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600' }}>
+                  {Math.round(downloadProgress * 20) * 5}%
+                </Text>
+              ) : alreadyDownloaded ? (
+                <Feather name="check" size={20} color="#7DD3A7" />
+              ) : (
+                <Feather name="download" size={20} color="#fff" />
+              )}
             </Pressable>
             <Pressable
               style={styles.lightboxAction}

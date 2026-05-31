@@ -11,6 +11,7 @@ import { ThemeProvider, useTheme } from './src/theme';
 import { AuthProvider } from './src/context/AuthContext';
 import { ChatSocketProvider } from './src/context/ChatSocketContext';
 import { RootNavigator } from './src/navigation/RootNavigator';
+import { ToastHost } from './src/components/Toast';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -72,6 +73,11 @@ export default function App() {
             <ChatSocketProvider>
               <ThemedStatusBar />
               <RootNavigator />
+              {/* ToastHost sits at the root so toast.success(...) calls from
+                  any screen render above all navigation surfaces. Positioned
+                  via absolute layout (see Toast.tsx) so it overlays anything
+                  including the floating tab bar. */}
+              <ToastHost />
             </ChatSocketProvider>
           </AuthProvider>
         </ThemeProvider>
