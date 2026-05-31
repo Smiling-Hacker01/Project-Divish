@@ -42,10 +42,25 @@ export function AddReasonScreen() {
   };
 
   const submit = async () => {
-    if (!text.trim()) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    // Silently normalize to the canonical "Because…" shape so user-typed
+    // and auto-generated reasons read with the same opening. Placeholders
+    // already teach this pattern, but a user who types a fragment
+    // ("the way they laugh") still gets it as "Because the way they
+    // laugh." rather than persisting a fragment that would render oddly
+    // in the queue. A user who already started with "because" gets it
+    // capitalized.
+    let normalized: string;
+    if (/^because\b/i.test(trimmed)) {
+      normalized = 'B' + trimmed.slice(1);
+    } else {
+      normalized = 'Because ' + trimmed.charAt(0).toLowerCase() + trimmed.slice(1);
+    }
+
     setSubmitting(true);
     try {
-      await lovebotApi.addReason({ text: text.trim(), forPartner: true });
+      await lovebotApi.addReason({ text: normalized, forPartner: true });
       navigation.goBack();
     } finally {
       setSubmitting(false);
