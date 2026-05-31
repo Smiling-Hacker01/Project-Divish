@@ -717,7 +717,10 @@ export function ChatScreen() {
       return;
     }
     const plain = decryptedCache[actionFor.id];
-    if (!plain) {
+    // Skip empty AND the locked sentinel — without this guard, "Copy" on a
+    // bubble that failed to decrypt would put the literal "__LOCKED__"
+    // string in the clipboard.
+    if (!plain || plain === '__LOCKED__') {
       closeMenu();
       return;
     }
@@ -735,7 +738,10 @@ export function ChatScreen() {
       return;
     }
     const plain = decryptedCache[actionFor.id];
-    if (!plain) {
+    // Skip the locked sentinel — without this, editing one of your OWN
+    // pre-keypair-rotation messages would pre-fill the composer with the
+    // literal "__LOCKED__" sentinel string.
+    if (!plain || plain === '__LOCKED__') {
       closeMenu();
       return;
     }

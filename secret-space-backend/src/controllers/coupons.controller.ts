@@ -8,13 +8,19 @@ import { couponCreated, couponRedeemed, couponApproved, couponFulfilled } from '
 
 /**
  * Resolve a user's display name for push notification copy. Returns the
- * stored name when available, or a neutral fallback so notification copy
- * never includes an empty/undefined string. Inline here (rather than as a
- * shared helper) because the controller is the only caller that needs it.
+ * stored name when available, or a neutral fallback. Always resolves —
+ * never throws — so call sites can use it inline without try/catch and a
+ * transient DB hiccup never breaks a controller's success path on its way
+ * to dispatching a (best-effort) push notification.
  */
 async function nameOf(userId: string): Promise<string> {
-  const u = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
-  return u?.name ?? 'Your partner';
+  try {
+    const u = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
+    return u?.name ?? 'Your partner';
+  } catch (err: any) {
+    logger.warn({ err: err?.message, userId }, '[Coupon] nameOf lookup failed, using fallback');
+    return 'Your partner';
+  }
 }
 
 // ── Realtime helper ────────────────────────────────────────────────────────────
