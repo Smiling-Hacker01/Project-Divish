@@ -1424,14 +1424,22 @@ export function ChatScreen() {
                     : `Message ${(user?.partnerName ?? 'them').split(' ')[0]}…`
                 }
                 placeholderTextColor={theme.colors.muted}
-                style={{
-                  flex: 1,
-                  color: theme.colors.foreground,
-                  fontFamily: theme.typography.body.fontFamily,
-                  paddingHorizontal: 14,
-                  fontSize: 15,
-                  maxHeight: 100,
-                }}
+                // textAlignVertical: 'top' is the key to natural multiline growth on
+                // Android — without it, lines drift toward the vertical center of the
+                // pill instead of stacking from the top edge as text wraps. iOS does
+                // this correctly by default but the prop is harmless there.
+                // includeFontPadding: false strips Android's default font metric
+                // padding so single-line text sits on the same baseline as iOS and
+                // the wrap's symmetric paddingVertical actually centers it.
+                textAlignVertical="top"
+                style={[
+                  styles.composerInput,
+                  {
+                    color: theme.colors.foreground,
+                    fontFamily: theme.typography.body.fontFamily,
+                  },
+                  Platform.OS === 'android' && { includeFontPadding: false },
+                ]}
                 multiline
               />
             </View>
@@ -1923,20 +1931,49 @@ const styles = StyleSheet.create({
   },
   composer: {
     flexDirection: 'row',
+    // alignItems: 'flex-end' so the +, mic, and send buttons stay pinned to
+    // the bottom edge of the pill as the input grows past one line — matches
+    // the convention in modern messaging apps where the action affordances
+    // never drift up with the typing cursor.
     alignItems: 'flex-end',
     paddingHorizontal: 12,
-    paddingVertical: 12,
+    // Slightly tighter vertical padding now that the pill itself owns its
+    // internal spacing — keeps the composer feeling compact when collapsed.
+    paddingVertical: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
     gap: 8,
   },
   iconBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   inputWrap: {
     flex: 1,
+    // minHeight 40 matches iconBtn height so a single-line composer reads as
+    // a row of equal-height pills. maxHeight 120 = ~5 lines at lineHeight 20;
+    // beyond that the input scrolls internally and the chat list above stays
+    // visible.
     minHeight: 40,
     maxHeight: 120,
     borderRadius: 20,
     borderWidth: 1,
-    justifyContent: 'center',
+    // Owning padding here (instead of relying on justifyContent: 'center')
+    // means text grows top-down naturally on both platforms. The 10/14
+    // split + lineHeight 20 places single-line text exactly on the pill's
+    // vertical center without any flex tricks.
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  composerInput: {
+    // No flex: 1 here — letting the TextInput size to its content (within the
+    // wrap's maxHeight) is what gives us smooth top-down growth. The wrap
+    // already owns horizontal padding, so the input itself runs edge-to-edge
+    // inside it.
+    padding: 0,
+    margin: 0,
+    fontSize: 15,
+    // Explicit lineHeight is critical: without it, Android and iOS pick
+    // different defaults driven by the font, and multiline wrapping ends up
+    // with uneven gaps between lines that read as "cramped" on Android and
+    // "loose" on iOS.
+    lineHeight: 20,
   },
   mediaImage: { width: 220, height: 220, borderRadius: 16 },
   waveform: { flexDirection: 'row', alignItems: 'center', gap: 2, marginLeft: 12 },
