@@ -40,6 +40,14 @@ export interface DownloadOptions {
   type: 'photo' | 'video';
   /** 0–1 progress callback invoked from FileSystem.createDownloadResumable. */
   onProgress?: (fraction: number) => void;
+  /**
+   * When true, the service still performs the download but does NOT emit
+   * any per-item toast (success or error). Used by the bulk-download path
+   * which composes a single aggregated toast at the end of the batch.
+   * Permission-denied toasts are still surfaced because the user needs to
+   * know why a batch halted before they got any value.
+   */
+  suppressToast?: boolean;
 }
 
 export interface DownloadResult {
@@ -53,14 +61,14 @@ export interface DownloadResult {
  * focus on UI state transitions rather than exception handling.
  */
 export async function downloadToGallery(opts: DownloadOptions): Promise<DownloadResult> {
-  const { itemId, url, type, onProgress } = opts;
+  const { itemId, url, type, onProgress, suppressToast = false } = opts;
 
   // 1. Dedup check — if we've already saved this item from this install,
   //    short-circuit. Stored key is a per-item bool, no payload needed.
   try {
     const savedFlag = await AsyncStorage.getItem(SAVED_KEY_PREFIX + itemId);
     if (savedFlag === '1') {
-      toast.info('Already in your gallery.');
+      if (!suppressToast) toast.info('Already in your gallery.');
       return { status: 'already-saved', alreadySaved: true };
     }
   } catch {
@@ -99,12 +107,12 @@ export async function downloadToGallery(opts: DownloadOptions): Promise<Download
     );
     const result = await downloader.downloadAsync();
     if (!result?.uri) {
-      toast.error("Couldn't download. Try again on a better connection.");
+      if (!suppressToast) toast.error("Couldn't download. Try again on a better connection.");
       return { status: 'error' };
     }
     localUri = result.uri;
   } catch (err: any) {
-    toast.error("Couldn't download. Try again on a better connection.");
+    if (!suppressToast) toast.error("Couldn't download. Try again on a better connection.");
     return { status: 'error' };
   }
 
@@ -132,10 +140,12 @@ export async function downloadToGallery(opts: DownloadOptions): Promise<Download
     }
 
     await AsyncStorage.setItem(SAVED_KEY_PREFIX + itemId, '1').catch(() => undefined);
-    toast.success(type === 'video' ? 'Video saved to your gallery.' : 'Saved to your gallery.');
+    if (!suppressToast) {
+      toast.success(type === 'video' ? 'Video saved to your gallery.' : 'Saved to your gallery.');
+    }
     return { status: 'saved' };
   } catch (err: any) {
-    toast.error("Couldn't save to your gallery.");
+    if (!suppressToast) toast.error("Couldn't save to your gallery.");
     return { status: 'error' };
   } finally {
     // 5. Clean up the cache copy regardless of save outcome. If MediaLibrary
