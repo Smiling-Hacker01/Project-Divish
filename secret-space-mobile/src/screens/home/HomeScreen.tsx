@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Animated, Easing, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -32,6 +32,17 @@ export function HomeScreen() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [avatarUploading, setAvatarUploading] = useState(false);
+
+  // Today's Reason refresh state. `reasonRefreshing` drives the spin animation
+  // on the icon. `reasonCooldownMessage` is a transient in-voice line that
+  // surfaces when the backend returns 429 — we deliberately keep this scoped to
+  // the card (no global toast) so the message reads as part of the bot's voice
+  // rather than a system error.
+  const [reasonRefreshing, setReasonRefreshing] = useState(false);
+  const [reasonCooldownMessage, setReasonCooldownMessage] = useState<string | null>(null);
+  const reasonSpin = useRef(new Animated.Value(0)).current;
+  const cooldownFade = useRef(new Animated.Value(0)).current;
+  const cooldownTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Upload the user's own avatar via multipart so large iPhone HEIC photos don't have
   // to be base64-encoded across the bridge. Backend writes to req.user.userId only —
@@ -111,6 +122,77 @@ export function HomeScreen() {
     await fetch();
     setRefreshing(false);
   };
+
+  // Spin loop while the refresh is in flight. We restart from 0 each cycle
+  // rather than letting the Animated.Value drift, so the icon visually returns
+  // to its resting orientation on stop.
+  useEffect(() => {
+    if (!reasonRefreshing) {
+      reasonSpin.stopAnimation();
+      reasonSpin.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.timing(reasonSpin, {
+        toValue: 1,
+        duration: 900,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [reasonRefreshing, reasonSpin]);
+
+  // Cleanup the cooldown timer on unmount — without this, a fast navigate-away
+  // during a cooldown leaves a setTimeout dangling that would call setState on
+  // an unmounted component.
+  useEffect(() => () => {
+    if (cooldownTimeoutRef.current) clearTimeout(cooldownTimeoutRef.current);
+  }, []);
+
+  const onRefreshReason = useCallback(async () => {
+    if (reasonRefreshing) return;
+    if (reasonCooldownMessage) {
+      // Already showing the cooldown line; tapping again during the visible
+      // window just re-extends the fade rather than firing a doomed request.
+      return;
+    }
+    setReasonRefreshing(true);
+    try {
+      const { reason } = await dashboardApi.refreshReason();
+      setData((prev) => (prev ? { ...prev, todaysReason: reason } : prev));
+    } catch (err: any) {
+      const status = err?.response?.status;
+      if (status === 429) {
+        // Warm in-voice copy — see Batch 3 design discussion. No technical
+        // "rate limit exceeded" text reaches the user.
+        setReasonCooldownMessage("Give me a moment, I'm thinking of something special for you 💕");
+        Animated.timing(cooldownFade, {
+          toValue: 1,
+          duration: 220,
+          useNativeDriver: true,
+        }).start();
+        if (cooldownTimeoutRef.current) clearTimeout(cooldownTimeoutRef.current);
+        cooldownTimeoutRef.current = setTimeout(() => {
+          Animated.timing(cooldownFade, {
+            toValue: 0,
+            duration: 320,
+            useNativeDriver: true,
+          }).start(() => setReasonCooldownMessage(null));
+        }, 3200);
+      }
+      // Any other failure (network, 5xx, partner_not_paired) silently reverts.
+      // The user sees no change — better than a scary alert for a soft feature.
+    } finally {
+      setReasonRefreshing(false);
+    }
+  }, [reasonRefreshing, reasonCooldownMessage, cooldownFade]);
+
+  const reasonSpinDeg = reasonSpin.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
 
   return (
     <ScreenContainer scroll={false}>
@@ -221,14 +303,29 @@ export function HomeScreen() {
           })}
         </ScrollView>
 
-        {/* Today's reason */}
+        {/* Today's reason — the refresh icon at the top-right is wired to
+            POST /api/dashboard/refresh-reason. On success the card text
+            updates optimistically; on 429 a warm in-voice line fades in
+            briefly under the reason. We never expose technical errors here. */}
         <Card variant="tinted-rose" style={{ marginTop: 24 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Text variant="overline" color="muted" style={{ flex: 1 }}>
               Today's reason
             </Text>
-            <Pressable hitSlop={8}>
-              <Feather name="refresh-cw" size={16} color={theme.colors.muted} />
+            <Pressable
+              hitSlop={12}
+              onPress={onRefreshReason}
+              disabled={reasonRefreshing}
+              accessibilityRole="button"
+              accessibilityLabel="Refresh today's reason"
+            >
+              <Animated.View style={{ transform: [{ rotate: reasonSpinDeg }] }}>
+                <Feather
+                  name="refresh-cw"
+                  size={16}
+                  color={reasonRefreshing ? theme.colors.primary : theme.colors.muted}
+                />
+              </Animated.View>
             </Pressable>
           </View>
           <View style={{ flexDirection: 'row', marginTop: 12 }}>
@@ -241,6 +338,13 @@ export function HomeScreen() {
               {data?.todaysReason ?? 'Because they chose you, too.'}
             </Text>
           </View>
+          {reasonCooldownMessage && (
+            <Animated.View style={{ opacity: cooldownFade, marginTop: 10 }}>
+              <Text variant="bodySmall" color="muted" italic style={{ lineHeight: 18 }}>
+                {reasonCooldownMessage}
+              </Text>
+            </Animated.View>
+          )}
         </Card>
 
         {/* Daily thought — distinct from "Today's Reason" both in label and in

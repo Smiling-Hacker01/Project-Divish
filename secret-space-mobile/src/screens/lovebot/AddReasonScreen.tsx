@@ -5,11 +5,17 @@ import { ScreenContainer, TopBar, Text, Button, Chip } from '@/components';
 import { useTheme } from '@/theme';
 import { lovebotApi } from '@/api';
 
+// Placeholders teach the canonical reason shape: a complete sentence that
+// starts with "Because…". Both auto-generated reasons (Gemini + fallback bank)
+// and manually-added reasons follow this rule, so the queue reads as one
+// uniform voice no matter which path produced the entry. Mixing fragments
+// like "…the way they laugh" with full Gemini sentences was producing a
+// "Because the way they laugh" / "Because Because…" disconnect.
 const PLACEHOLDERS = [
-  '…the way they laugh',
-  '…how they make coffee',
-  '…their morning sleep voice',
-  '…that thing they do at concerts',
+  'Because of the way they laugh in their sleep…',
+  'Because they make coffee just the way I like it…',
+  'Because of that thing they do at concerts…',
+  'Because their morning voice is the safest sound I know…',
 ];
 
 const VIBES = ['Sweet', 'Playful', 'Heartfelt', 'Inside joke', 'Spicy'] as const;
