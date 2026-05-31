@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Dimensions,
   FlatList,
   Modal,
@@ -15,12 +16,14 @@ import { Image as ExpoImage } from 'expo-image';
 import { Video, ResizeMode } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { ScreenContainer, InlineHeader, Text, Button, EmptyState, GlassSurface } from '@/components';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ScreenContainer, InlineHeader, Text, Button, EmptyState, GlassSurface, toast } from '@/components';
 import { useTheme } from '@/theme';
 import { vaultApi } from '@/api';
 import { VaultItem } from '@/types/api';
 import { vaultQueue, VaultQueueEntry } from '@/services/vaultQueue';
 import { vaultUploadManager, ManagerState } from '@/services/vaultUploadManager';
+import { downloadToGallery } from '@/services/vaultDownload';
 import { thumbUrl, fullUrl } from '@/utils/cloudinary';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -34,14 +37,59 @@ const PAGE_SIZE = 30;
 export function VaultGridScreen() {
   const theme = useTheme();
   const navigation = useNavigation<any>();
+  // Safe-area insets drive both the bulk progress card (pinned below the
+  // status bar + InlineHeader) and the bulk action bar (sits comfortably
+  // above the floating tab bar AND the home indicator / gesture pill).
+  // Reading them via the hook means each device gets the right offsets
+  // without hardcoded constants that drift on edge-to-edge phones.
+  const insets = useSafeAreaInsets();
   const [items, setItems] = useState<VaultItem[]>([]);
   const [previewIdx, setPreviewIdx] = useState<number | null>(null);
+  // Long-press on a grid tile opens an action sheet for "save to gallery /
+  // delete" without entering the lightbox. Faster than the
+  // tap-open-tap-action sequence for users who know what they want.
+  const [actionSheetItem, setActionSheetItem] = useState<VaultItem | null>(null);
+  const [actionSheetSaving, setActionSheetSaving] = useState(false);
   const [showUploadSheet, setShowUploadSheet] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [uploadState, setUploadState] = useState<ManagerState>(vaultUploadManager.getState());
+
+  // ── Select / bulk mode ───────────────────────────────────────────────────────
+  // When selectMode is on, tiles flip from "tap-to-preview" to "tap-to-select"
+  // and a bottom action bar slides in with Download / Delete affordances. The
+  // long-press single-item action sheet is suppressed in select mode so the
+  // gesture doesn't fight with multi-select; users get out of select mode
+  // explicitly via the Cancel button in the header.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  // Sequential bulk-download state. progress is { current, total } during a
+  // batch and null otherwise.
+  //   bulkCancelRef — set true to make the loop exit at the top of the next
+  //     iteration. Driven by the user-tapped Cancel button AND by the unmount
+  //     cleanup below so a navigate-away always halts in-flight work.
+  //   mountedRef — read after every await in the bulk loops to guard against
+  //     setState/toast firing on an unmounted screen. RN won't crash on stale
+  //     setState today but logs a warning and the toast still fires orphaned
+  //     above the next screen, which is the user-visible bug we're closing.
+  const [bulkProgress, setBulkProgress] = useState<{ current: number; total: number } | null>(null);
+  const bulkCancelRef = useRef(false);
+  const mountedRef = useRef(true);
+  const bulkActionBarAnim = useRef(new Animated.Value(0)).current;
+
+  // Mount/unmount tracking. Flipping both flags on unmount is intentional:
+  // mountedRef guards setState/toast calls, bulkCancelRef tells the loop to
+  // stop walking the list (no point doing more network work for a screen
+  // the user has navigated away from).
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      bulkCancelRef.current = true;
+    };
+  }, []);
 
   // Race-protection epoch: bumped on every fresh load so stale responses can't
   // overwrite a more recent page.
@@ -118,6 +166,231 @@ export function VaultGridScreen() {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  // Each time the action sheet opens or closes, reset the in-flight saving
+  // flag so a fresh open never shows a stale "Saving…" label. We no longer
+  // track per-item "already saved" state — the service now allows
+  // re-downloads on every tap, so the sheet always offers Save.
+  useEffect(() => {
+    setActionSheetSaving(false);
+  }, [actionSheetItem?.id]);
+
+  // Slide the bulk action bar in / out whenever we enter or leave select
+  // mode. translateY 60 (offscreen) <-> 0; opacity follows so the bar fades
+  // in along with the slide. useNativeDriver keeps this off the JS thread
+  // even if the grid is mid-render at the time.
+  useEffect(() => {
+    Animated.timing(bulkActionBarAnim, {
+      toValue: selectMode ? 1 : 0,
+      duration: 220,
+      useNativeDriver: true,
+    }).start();
+  }, [selectMode, bulkActionBarAnim]);
+
+  const enterSelectMode = useCallback((seedId?: string) => {
+    setSelectMode(true);
+    setSelectedIds(seedId ? new Set([seedId]) : new Set());
+  }, []);
+
+  const exitSelectMode = useCallback(() => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+    // Don't reset bulkProgress here — if the user exits select mode while a
+    // batch is still in flight, the progress card keeps showing until the
+    // loop drains. The cancel button on the progress card is the proper
+    // path to abort an in-flight batch.
+  }, []);
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const selectAllVisible = useCallback(() => {
+    setSelectedIds((prev) => {
+      // If every visible item is already selected, treat the tap as
+      // "deselect all" — common toggle-style behavior in iOS Photos.
+      if (prev.size === items.length && items.length > 0) return new Set();
+      return new Set(items.map((it) => it.id));
+    });
+  }, [items]);
+
+  // Bulk download — sequential to avoid MediaLibrary write races and
+  // Cloudinary CDN throttling. Wall-clock cost (~1-2s/item on Wi-Fi) is
+  // acceptable for the private-couples scale; reliability matters more than
+  // parallelism. We suppress the per-item toasts from downloadToGallery
+  // (which would spam 10× during a 10-item batch) and surface a single
+  // aggregated toast at the end.
+  const runBulkDownload = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    const targets = items.filter((it) => selectedIds.has(it.id));
+    if (targets.length === 0) return;
+
+    bulkCancelRef.current = false;
+    setBulkProgress({ current: 0, total: targets.length });
+
+    let saved = 0;
+    let failed = 0;
+    let permissionDenied = false;
+
+    for (let i = 0; i < targets.length; i++) {
+      // Bail early if the user tapped Cancel OR the screen has unmounted
+      // (cleanup effect flips bulkCancelRef on unmount, so we don't need
+      // a separate mountedRef check here).
+      if (bulkCancelRef.current) break;
+      const item = targets[i];
+      // Guard setState behind mountedRef so a navigate-away between
+      // iterations doesn't fire setState on an unmounted screen. The await
+      // below is the actual yield point where the unmount can land.
+      if (mountedRef.current) setBulkProgress({ current: i, total: targets.length });
+      // suppressToast lets the loop decide what to show at the end. The
+      // service still surfaces a permission toast on the first denial
+      // because there's no way to proceed past that without it.
+      const result = await downloadToGallery({
+        itemId: item.id,
+        url: item.url,
+        type: item.type,
+        suppressToast: true,
+      });
+      if (result.status === 'saved') saved++;
+      else if (result.status === 'permission-denied') {
+        permissionDenied = true;
+        break;
+      } else failed++;
+    }
+
+    // Post-loop cleanup + result toast — skip entirely if the screen has
+    // unmounted since the user can't see a toast for a screen they left,
+    // and setState on unmounted is the original warning we're avoiding.
+    if (!mountedRef.current) return;
+
+    setBulkProgress(null);
+    exitSelectMode();
+
+    if (permissionDenied) {
+      // The service already toasted the permission-denied message; nothing
+      // more to surface here.
+      return;
+    }
+
+    // Compose a single aggregated result toast.
+    if (failed === 0) {
+      toast.success(`Saved ${saved} to your gallery.`);
+    } else if (saved === 0) {
+      toast.error(`Couldn't save any. Try again on a better connection.`);
+    } else {
+      toast.info(`Saved ${saved} of ${targets.length}. ${failed} failed.`);
+    }
+  }, [items, selectedIds, exitSelectMode]);
+
+  const cancelBulkDownload = useCallback(() => {
+    bulkCancelRef.current = true;
+  }, []);
+
+  // Bulk delete — sequential REST calls. Optimistically remove from the
+  // local list as each one succeeds so the grid visibly shrinks during the
+  // batch. Failed IDs stay in the selection so the user can hit Delete
+  // again to retry just the failures, instead of having to re-tap every
+  // tile from scratch. A 401 breaks the loop immediately (no point firing
+  // 19 more calls that will all 401 too).
+  const runBulkDelete = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    const count = selectedIds.size;
+    Alert.alert(
+      count === 1 ? 'Remove this memory?' : `Remove ${count} memories?`,
+      'They will be permanently deleted from the vault and cannot be recovered.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            const targets = Array.from(selectedIds);
+            const failedIds: string[] = [];
+            let deleted = 0;
+            let unauthorized = false;
+
+            for (const id of targets) {
+              if (bulkCancelRef.current) {
+                // Unmount or explicit cancel — preserve remaining selections.
+                failedIds.push(id);
+                continue;
+              }
+              try {
+                await vaultApi.remove(id);
+                if (mountedRef.current) {
+                  setItems((prev) => prev.filter((p) => p.id !== id));
+                }
+                deleted++;
+              } catch (err: any) {
+                failedIds.push(id);
+                // 401 means the vault token has expired or been revoked
+                // mid-batch — pounding the server with the remaining IDs
+                // will just stack up 401s. Break and let the user re-auth
+                // before retrying.
+                if (err?.response?.status === 401) {
+                  unauthorized = true;
+                  // Carry over the rest of the targets that we never tried.
+                  const remainingIndex = targets.indexOf(id) + 1;
+                  for (let j = remainingIndex; j < targets.length; j++) {
+                    failedIds.push(targets[j]);
+                  }
+                  break;
+                }
+              }
+            }
+
+            // If the screen unmounted mid-delete we have nothing more to do.
+            if (!mountedRef.current) return;
+
+            if (failedIds.length === 0) {
+              exitSelectMode();
+              toast.success(`Removed ${deleted}.`);
+            } else {
+              // Keep failures in the selection so the user can retry just
+              // those without re-tapping every tile.
+              setSelectedIds(new Set(failedIds));
+              if (unauthorized) {
+                toast.error(`Couldn't remove these. Unlock the vault and try again.`);
+              } else if (deleted === 0) {
+                toast.error(`Couldn't remove these. Try again.`);
+              } else {
+                toast.info(`Removed ${deleted} of ${targets.length}. ${failedIds.length} still selected.`);
+              }
+            }
+          },
+        },
+      ]
+    );
+  }, [selectedIds, exitSelectMode]);
+
+  const handleSheetSave = useCallback(async () => {
+    if (!actionSheetItem || actionSheetSaving) return;
+    setActionSheetSaving(true);
+    try {
+      await downloadToGallery({
+        itemId: actionSheetItem.id,
+        url: actionSheetItem.url,
+        type: actionSheetItem.type,
+      });
+    } finally {
+      // try/finally guard against the saving flag getting stuck `true` if
+      // downloadToGallery ever throws (today it always resolves with a
+      // DownloadResult, but the finally block is cheap insurance against a
+      // future refactor that introduces a throw path).
+      if (mountedRef.current) {
+        setActionSheetSaving(false);
+        // Dismiss the sheet — the toast surfaced by downloadToGallery tells
+        // the user what happened. Permission-denied / error toasts render
+        // above the dismissed sheet either way.
+        setActionSheetItem(null);
+      }
+    }
+  }, [actionSheetItem, actionSheetSaving]);
 
   useFocusEffect(
     useCallback(() => {
@@ -298,14 +571,31 @@ export function VaultGridScreen() {
   const renderTile = useCallback(
     ({ item, index }: { item: VaultItem; index: number }) => {
       const thumb = thumbUrl(item.thumbnailUrl ?? item.url, TILE_SIZE) ?? item.thumbnailUrl ?? item.url;
+      const isSelected = selectMode && selectedIds.has(item.id);
       return (
-        <Pressable onPress={() => setPreviewIdx(index)}>
+        <Pressable
+          onPress={() => {
+            // In select mode, tap toggles selection. Otherwise tap opens the
+            // lightbox preview as before.
+            if (selectMode) toggleSelect(item.id);
+            else setPreviewIdx(index);
+          }}
+          onLongPress={() => {
+            // Long-press in select mode is a no-op (the gesture would
+            // otherwise fight with multi-select). In normal mode it opens
+            // the per-item action sheet.
+            if (selectMode) return;
+            setActionSheetItem(item);
+          }}
+          delayLongPress={300}
+        >
           <View
             style={[
               styles.tile,
               {
                 backgroundColor: theme.colors.surface,
-                borderColor: theme.colors.hairline,
+                borderColor: isSelected ? theme.colors.primary : theme.colors.hairline,
+                borderWidth: isSelected ? 2 : 1,
                 marginLeft: index % NUM_COLS === 0 ? 0 : TILE_GAP,
               },
             ]}
@@ -322,11 +612,31 @@ export function VaultGridScreen() {
                 <Feather name="play" size={12} color="#fff" />
               </View>
             )}
+            {selectMode && (
+              // Selection indicator — top-right circle that fills with rose
+              // and a check icon when the tile is selected. The whole tile
+              // dims slightly when unselected during select mode so the
+              // selected tiles read as the focal points.
+              <>
+                {!isSelected && <View style={styles.tileDim} pointerEvents="none" />}
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.selectMark,
+                    isSelected
+                      ? { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary }
+                      : { backgroundColor: 'rgba(0,0,0,0.35)', borderColor: 'rgba(255,255,255,0.6)' },
+                  ]}
+                >
+                  {isSelected && <Feather name="check" size={14} color="#fff" />}
+                </View>
+              </>
+            )}
           </View>
         </Pressable>
       );
     },
-    [theme.colors.surface, theme.colors.hairline]
+    [theme.colors.surface, theme.colors.hairline, theme.colors.primary, selectMode, selectedIds, toggleSelect]
   );
 
   // Fixed-size tiles → getItemLayout is a massive perf win for FlatList at 100+ items.
@@ -368,13 +678,38 @@ export function VaultGridScreen() {
 
   return (
     <ScreenContainer scroll={false} glowCorner="none" edges={['top', 'bottom']}>
-      <InlineHeader
-        title="Vault"
-        rightActions={[
-          { icon: 'lock', onPress: lockNow },
-          { icon: 'plus', onPress: () => setShowUploadSheet(true) },
-        ]}
-      />
+      {/* Header swaps wholesale when select mode is active so the affordances
+          on the left and right match what the user can actually do right
+          now. Out of select mode: title + lock + plus + select-multi entry.
+          In select mode: "Cancel" on the left, count as the title, Select
+          All on the right. */}
+      {selectMode ? (
+        <InlineHeader
+          leadingElement={
+            <Pressable onPress={exitSelectMode} hitSlop={8}>
+              <Text variant="bodyMedium" color="primary">
+                Cancel
+              </Text>
+            </Pressable>
+          }
+          title={selectedIds.size === 0 ? 'Select items' : `${selectedIds.size} selected`}
+          rightActions={[
+            {
+              icon: selectedIds.size === items.length && items.length > 0 ? 'square' : 'check-square',
+              onPress: selectAllVisible,
+            },
+          ]}
+        />
+      ) : (
+        <InlineHeader
+          title="Vault"
+          rightActions={[
+            { icon: 'check-circle', onPress: () => enterSelectMode() },
+            { icon: 'lock', onPress: lockNow },
+            { icon: 'plus', onPress: () => setShowUploadSheet(true) },
+          ]}
+        />
+      )}
       {/* Header status row — count on the left, lock badge on the right. Both lines
           read as one cohesive sub-title for the screen. When an upload is in flight
           the count line is replaced by the progress label below, so the eye doesn't
@@ -511,9 +846,9 @@ export function VaultGridScreen() {
       ) : items.length === 0 ? (
         <EmptyState
           icon="lock"
-          title="Your private space is empty"
-          body="Add a moment that's just for the two of you."
-          cta={{ label: 'Add your first memory', onPress: () => setShowUploadSheet(true) }}
+          title="Nothing in here yet."
+          body="Add a photo or video. It stays just between the two of you."
+          cta={{ label: 'Add something', onPress: () => setShowUploadSheet(true) }}
         />
       ) : (
         <FlatList
@@ -592,6 +927,48 @@ export function VaultGridScreen() {
         </Pressable>
       </Modal>
 
+      {/* Long-press action sheet for grid tiles. Faster than entering the
+          lightbox just to save or delete a single item — matches the
+          iOS Photos / Telegram convention where holding a thumbnail
+          reveals contextual actions. */}
+      <Modal
+        visible={actionSheetItem !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setActionSheetItem(null)}
+      >
+        <Pressable style={styles.scrim} onPress={() => setActionSheetItem(null)}>
+          <Pressable onPress={() => {}} style={[styles.sheet, { backgroundColor: theme.colors.surface }]}>
+            <View style={[styles.handle, { backgroundColor: theme.colors.hairlineStrong }]} />
+            <Text variant="h3" align="center" style={{ marginTop: 16, marginBottom: 4 }}>
+              {actionSheetItem?.type === 'video' ? 'Video' : 'Photo'}
+            </Text>
+            <Text variant="bodySmall" color="muted" align="center" style={{ marginBottom: 20 }}>
+              What would you like to do?
+            </Text>
+            <Button
+              label={actionSheetSaving ? 'Saving…' : 'Save to gallery'}
+              leadingIcon="download"
+              fullWidth
+              onPress={handleSheetSave}
+              disabled={actionSheetSaving}
+            />
+            <Button
+              label="Delete"
+              leadingIcon="trash-2"
+              variant="destructive"
+              style={{ marginTop: 12 }}
+              fullWidth
+              onPress={() => {
+                const item = actionSheetItem;
+                setActionSheetItem(null);
+                if (item) confirmDelete(item, () => undefined);
+              }}
+            />
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* Swipeable lightbox */}
       {previewIdx !== null && items[previewIdx] && (
         <Lightbox
@@ -613,6 +990,119 @@ export function VaultGridScreen() {
           }
         />
       )}
+
+      {/* Bulk-batch progress card — pinned just below the status bar +
+          InlineHeader while a batch download is in flight. The top offset
+          is composed from useSafeAreaInsets().top (status-bar / notch on
+          iPhone, dynamic island, Android status bar) + 64dp which clears
+          the InlineHeader's content row, so the card lands at a
+          consistent visual position on every device regardless of how
+          tall the notch / hole-punch / status bar is.
+          A Cancel button lets the user stop the loop mid-way; the loop
+          drains the current item then exits. */}
+      {bulkProgress && (
+        <View
+          style={[
+            styles.bulkProgressCard,
+            {
+              backgroundColor: theme.colors.surface,
+              borderColor: theme.colors.hairline,
+              top: insets.top + 64,
+            },
+          ]}
+        >
+          <ActivityIndicator color={theme.colors.primary} />
+          <View style={{ flex: 1, marginLeft: 10 }}>
+            <Text variant="bodySmall" weight="medium">
+              Saving {bulkProgress.current + 1} of {bulkProgress.total}
+            </Text>
+            <Text variant="caption" color="muted" style={{ marginTop: 2 }}>
+              Don't lock your screen yet.
+            </Text>
+          </View>
+          <Pressable onPress={cancelBulkDownload} hitSlop={8}>
+            <Text variant="caption" color="primary" weight="semibold">
+              Cancel
+            </Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* Bottom bulk action bar — slides in / out via the Animated value. The
+          bar floats above the floating tab bar AND the home indicator on
+          edge-to-edge gesture-nav devices. Bottom-offset composition:
+            • The tab bar sits at `Math.max(insets.bottom, 12) + 12` from
+              the screen edge with internal height 64, so its TOP edge is at
+              `Math.max(insets.bottom, 12) + 76`.
+            • This bar sits 12dp above that top edge → bottom offset =
+              `Math.max(insets.bottom, 12) + 88`.
+            • On a notched iPhone (insets.bottom ≈ 34) → 122dp clearance.
+              On a flat-bottomed Android (insets.bottom = 0) → 100dp.
+              On a Pro Max in gesture mode (insets.bottom ≈ 34) → 122dp,
+              comfortably above the home indicator instead of the prior
+              7-21dp squeeze.
+          Match to the FloatingTabBar's formula in navigation/MainTabs.tsx
+          so the two stay in lockstep if either gets retuned. */}
+      <Animated.View
+        pointerEvents={selectMode ? 'auto' : 'none'}
+        style={[
+          styles.bulkActionBar,
+          {
+            backgroundColor: theme.colors.surface,
+            borderTopColor: theme.colors.hairline,
+            bottom: Math.max(insets.bottom, 12) + 88,
+            opacity: bulkActionBarAnim,
+            transform: [
+              {
+                translateY: bulkActionBarAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [80, 0],
+                }),
+              },
+            ],
+          },
+        ]}
+      >
+        <View style={{ flex: 1, paddingLeft: 4 }}>
+          <Text variant="bodyMedium" weight="medium">
+            {selectedIds.size === 0
+              ? 'Nothing selected'
+              : `${selectedIds.size} ${selectedIds.size === 1 ? 'item' : 'items'}`}
+          </Text>
+          <Text variant="caption" color="muted">
+            Save to gallery or remove.
+          </Text>
+        </View>
+        <Pressable
+          onPress={runBulkDownload}
+          disabled={selectedIds.size === 0 || !!bulkProgress}
+          style={[
+            styles.bulkActionBtn,
+            {
+              backgroundColor:
+                selectedIds.size > 0 && !bulkProgress
+                  ? theme.colors.primary
+                  : theme.colors.hairlineStrong,
+            },
+          ]}
+        >
+          <Feather name="download" size={16} color="#fff" />
+        </Pressable>
+        <Pressable
+          onPress={runBulkDelete}
+          disabled={selectedIds.size === 0}
+          style={[
+            styles.bulkActionBtn,
+            {
+              marginLeft: 8,
+              backgroundColor:
+                selectedIds.size > 0 ? theme.colors.destructive : theme.colors.hairlineStrong,
+            },
+          ]}
+        >
+          <Feather name="trash-2" size={16} color="#fff" />
+        </Pressable>
+      </Animated.View>
     </ScreenContainer>
   );
 }
@@ -637,6 +1127,10 @@ function Lightbox({
 }) {
   const [currentIdx, setCurrentIdx] = useState(initialIndex);
   const listRef = useRef<FlatList<VaultItem> | null>(null);
+  // Per-current-item download state. Resets each time the user pages to a
+  // different lightbox slide because both flags are item-scoped.
+  const [downloading, setDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
 
   useEffect(() => {
     onIndexChange(currentIdx);
@@ -654,6 +1148,31 @@ function Lightbox({
   }, [initialIndex]);
 
   const currentItem = items[currentIdx];
+
+  // Reset per-item download state when the user pages to a different slide.
+  // We no longer track an "already saved" indicator — saves are always
+  // available, so the icon just shows the download glyph (or the percentage
+  // while a download is in flight).
+  useEffect(() => {
+    setDownloading(false);
+    setDownloadProgress(0);
+  }, [currentItem?.id]);
+
+  const onDownload = useCallback(
+    async (item: VaultItem) => {
+      if (downloading) return;
+      setDownloading(true);
+      setDownloadProgress(0);
+      await downloadToGallery({
+        itemId: item.id,
+        url: item.url,
+        type: item.type,
+        onProgress: (fraction) => setDownloadProgress(fraction),
+      });
+      setDownloading(false);
+    },
+    [downloading]
+  );
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
@@ -710,8 +1229,24 @@ function Lightbox({
 
         <GlassSurface radius={28} style={styles.lightboxBar}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-around', padding: 12 }}>
-            <Pressable style={styles.lightboxAction} hitSlop={8}>
-              <Feather name="info" size={20} color="#fff" />
+            <Pressable
+              style={styles.lightboxAction}
+              hitSlop={8}
+              onPress={() => currentItem && onDownload(currentItem)}
+              disabled={!currentItem || downloading}
+              accessibilityRole="button"
+              accessibilityLabel="Save to gallery"
+            >
+              {downloading ? (
+                // While the download is in flight, show the percentage in
+                // place of the icon. Two-digit precision is overkill on a
+                // tiny lightbox action, so we round to the nearest 5%.
+                <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600' }}>
+                  {Math.round(downloadProgress * 20) * 5}%
+                </Text>
+              ) : (
+                <Feather name="download" size={20} color="#fff" />
+              )}
             </Pressable>
             <Pressable
               style={styles.lightboxAction}
@@ -739,6 +1274,60 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     overflow: 'hidden',
     borderWidth: 1,
+  },
+  // Visual layer applied to UNSELECTED tiles while in select mode so the
+  // selected ones read as the focal points. Subtle — strong enough to
+  // dim without making the unselected tiles unreadable in case the user
+  // is scanning for what they meant to pick.
+  tileDim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  // Selection indicator in the top-right corner of each tile.
+  selectMark: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Pinned top-of-screen card surfaced while a bulk download is in flight.
+  bulkProgressCard: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  // Floating bottom action bar shown only in select mode. Sits above the
+  // app's floating tab bar (which already reserves theme.bottomNavReserve
+  // pixels at the bottom of every screen).
+  bulkActionBar: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    borderTopWidth: 1,
+    borderWidth: 1,
+  },
+  bulkActionBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   uploadingBar: {
     flexDirection: 'row',

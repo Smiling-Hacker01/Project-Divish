@@ -1,5 +1,6 @@
 import logger from '../config/logger';
 import redis from '../config/redis';
+import { humanize, recordOutcome } from './humanize';
 
 /**
  * Generates the home screen's "for the hard days" daily reflection via Google
@@ -12,15 +13,18 @@ import redis from '../config/redis';
  * crosses midnight the dateKey changes naturally → next request misses cache
  * → fresh Gemini call → new thought for the day.
  *
- * Fallback policy (option A): when Gemini fails we return a bank quote but
- * we DO NOT cache it. That way the next request retries Gemini — important
- * because a brief Gemini outage shouldn't lock the couple into a fallback
- * for the rest of the day.
+ * Fallback policy: when Gemini fails OR the humanizer rejects on retry, we
+ * return a bank quote but DO NOT cache it. That way the next request retries
+ * Gemini — important because a brief Gemini hiccup shouldn't lock the couple
+ * into a fallback for the rest of the day.
+ *
+ * Pipeline mirrors loveReasonGenerator: Gemini → humanize → ship | retry →
+ * humanize → ship | fallback. See services/humanize.ts for the full design.
  *
  * Tone vs. love reasons: the LoveBot reason is a *personal* note ("Because
- * you ..."). This is a *universal* reflection ("We ...", "Love isn't ...").
- * Different categories on purpose so the two home-screen cards never read
- * as duplicates.
+ * you ..."). This is a *universal* observation about relationships ("we
+ * ...", "love is ...", "couples ..."). Different categories on purpose so
+ * the two home-screen cards never read as duplicates.
  */
 
 const GEMINI_API_URL =
@@ -31,22 +35,28 @@ const REQUEST_TIMEOUT_MS = 10_000;
 // IST dateKey rolls over, without leaving a stale entry around for too long.
 const CACHE_TTL_SECONDS = 30 * 60 * 60;
 
+// Small honest observations about relationships, not motivational coaching.
+// Each one should land like a friend saying something true at a coffee
+// shop, not like an Instagram quote card. Updated as we learn what
+// resonates with real users.
 const FALLBACK_THOUGHTS = [
-  "The relationships that last aren't the ones without storms — they're the ones built to weather them.",
-  "Love isn't a feeling you fall into. It's a choice you keep making.",
-  "One hard day doesn't erase a hundred good ones. Keep going.",
-  "Every couple that's still together had a moment they almost weren't.",
-  "Forgiveness isn't forgetting — it's choosing the next chapter together.",
-  "On the days you don't feel it, remember why you chose each other.",
-  "The work is the love. There is no version without it.",
-  "What you build today is what you'll lean on tomorrow.",
-  "Real love is staying when leaving would be simpler.",
-  "Distance, busyness, and bad moods are temporary. What you share isn't.",
-  "Show up — especially when it's not your turn.",
-  "Half of love is patience. The other half is presence.",
-  "There is no perfect partner — only the one you keep choosing.",
-  "The best relationships look easy because they're worked at hardest.",
-  "Staying soft when life makes you hard is the bravest thing you can do for each other.",
+  "When you're arguing about dishes, it's almost never about the dishes.",
+  "Some days you'll feel further apart for no reason. By tomorrow you'll have forgotten why.",
+  "The boring part is the part you'll miss when it's gone.",
+  "You don't have to be okay at the same time. Just be there when one of you isn't.",
+  "Love is mostly noticing. And sometimes deciding not to mention what you noticed.",
+  "The person you fell for is still in there. They just got busy.",
+  "If they said it after 11pm, they probably didn't mean it.",
+  "If you can sit in the same room without talking and feel fine, that's most of it.",
+  "Half of what keeps a couple together is being too tired to argue about the small stuff.",
+  "Sometimes all someone wants is for you to ask if they're okay.",
+  "Apologies that come too fast usually aren't apologies.",
+  "Walking past their socks on the floor and saying nothing counts as love.",
+  "You'll have weeks where it feels routine. That's not the relationship breaking. That's the relationship.",
+  "Most couples that lasted had a hundred moments where they almost didn't.",
+  "Nobody fights perfectly. Sometimes the best you can do is apologize for how you said it.",
+  "The version of them you fell for didn't come with a warranty. It came with a Tuesday.",
+  "You'll get one bad day, then a good one, then a bunch of medium ones. That's most of it.",
 ];
 
 interface GenerateOpts {
@@ -66,18 +76,52 @@ export async function generateDailyThought(opts: GenerateOpts): Promise<string> 
     const cached = await redis.get(cacheKey);
     if (cached && cached.length > 10) return cached;
   } catch (err: any) {
-    logger.warn({ err: err?.message, cacheKey }, '[DailyThought] Redis read failed, proceeding without cache');
+    logger.warn(
+      { err: err?.message, cacheKey },
+      '[DailyThought] Redis read failed, proceeding without cache'
+    );
   }
 
-  // 2. Cache miss — call Gemini.
+  // 2. Cache miss — call Gemini, humanize, possibly retry, possibly fallback.
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     logger.warn('[DailyThought] GEMINI_API_KEY not set, using fallback bank');
+    recordOutcome('thought', 'fallback');
     return pickFallback(opts.coupleId, dateKey);
   }
 
-  const promptText = buildPrompt(opts);
+  const firstAttempt = await callGemini(apiKey, buildPrompt(opts));
+  if (firstAttempt !== null) {
+    const decision1 = humanize(firstAttempt, { context: 'thought' });
+    if (decision1.kind === 'pass') {
+      // Cache the humanized text (not the raw Gemini output).
+      await persistToCache(cacheKey, decision1.text);
+      return decision1.text;
+    }
 
+    if (decision1.kind === 'retry') {
+      const retryPrompt = buildPrompt(opts, decision1.hint);
+      const secondAttempt = await callGemini(apiKey, retryPrompt);
+      if (secondAttempt !== null) {
+        const decision2 = humanize(secondAttempt, { context: 'thought' });
+        if (decision2.kind === 'pass') {
+          recordOutcome('thought', 'retry-humanized');
+          await persistToCache(cacheKey, decision2.text);
+          return decision2.text;
+        }
+      }
+    }
+  }
+
+  // Either Gemini failed outright, the first response was rejected, or the
+  // retry was also rejected. Fall back — and intentionally do NOT cache, so
+  // a transient Gemini outage doesn't lock the couple into the same bank
+  // quote for the rest of the day.
+  recordOutcome('thought', 'fallback');
+  return pickFallback(opts.coupleId, dateKey);
+}
+
+async function callGemini(apiKey: string, prompt: string): Promise<string | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -86,7 +130,7 @@ export async function generateDailyThought(opts: GenerateOpts): Promise<string> 
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: promptText }] }],
+        contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: 0.9,
           topP: 0.95,
@@ -106,71 +150,71 @@ export async function generateDailyThought(opts: GenerateOpts): Promise<string> 
       const body = await res.text().catch(() => '<no body>');
       logger.warn(
         { status: res.status, body: body.slice(0, 200) },
-        '[DailyThought] Gemini API returned non-OK, using fallback (not cached)'
+        '[DailyThought] Gemini API returned non-OK'
       );
-      return pickFallback(opts.coupleId, dateKey);
+      return null;
     }
 
     const json = (await res.json()) as any;
     const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
 
     if (typeof text !== 'string' || !text.trim()) {
-      logger.warn('[DailyThought] Gemini returned empty/invalid, using fallback (not cached)');
-      return pickFallback(opts.coupleId, dateKey);
+      logger.warn('[DailyThought] Gemini returned empty/invalid response');
+      return null;
     }
-
-    const cleaned = cleanThought(text);
-    // Tight upper bound on purpose: at fontSize 14 / lineHeight 20 inside the
-    // Home card's ~290dp content width, ~140 chars is the sweet spot (2-3
-    // lines) and anything past ~180 starts pushing the layout. If Gemini drifts
-    // that long it's probably also drifted off-prompt — fall back rather than
-    // truncate mid-sentence.
-    if (cleaned.length < 10 || cleaned.length > 180) {
-      logger.warn({ length: cleaned.length, preview: cleaned.slice(0, 80) }, '[DailyThought] Gemini output out of bounds, using fallback (not cached)');
-      return pickFallback(opts.coupleId, dateKey);
-    }
-
-    // 3. Success — cache for the rest of the day. Failure to cache is non-fatal
-    //    (next request will just call Gemini again).
-    redis.set(cacheKey, cleaned, 'EX', CACHE_TTL_SECONDS).catch((err: any) => {
-      logger.warn({ err: err?.message, cacheKey }, '[DailyThought] Redis write failed (non-fatal)');
-    });
-
-    return cleaned;
+    return text;
   } catch (err: any) {
     if (err?.name === 'AbortError') {
-      logger.warn('[DailyThought] Gemini request timed out, using fallback (not cached)');
+      logger.warn('[DailyThought] Gemini request timed out');
     } else {
-      logger.warn({ err: err?.message }, '[DailyThought] Gemini request failed, using fallback (not cached)');
+      logger.warn({ err: err?.message }, '[DailyThought] Gemini request failed');
     }
-    return pickFallback(opts.coupleId, dateKey);
+    return null;
   } finally {
     clearTimeout(timer);
   }
 }
 
-function buildPrompt({ user1Name, user2Name, anniversaryDate }: GenerateOpts): string {
-  const since = anniversaryDate ? `, together since ${anniversaryDate}` : '';
-  return `You write one short daily reflection for a couple — a "reason not to give up on each other" they will both see when they open their shared private app.
-
-Couple: ${user1Name} and ${user2Name}${since}.
-
-Today's reflection must:
-- Be 1 short sentence, between 60 and 140 characters total — this is a hard constraint, not a guideline
-- Use universal framing (no "you", no second person — write as if narrating to both partners at once, or use "we", "love", "the work", "couples", etc.)
-- Speak to commitment, perseverance, the work of love, choosing each other on hard days
-- Be concrete and slightly unexpected — never a Hallmark cliche
-- Avoid these phrases entirely: "the love of my life", "you complete me", "ride or die", "soulmate", "happily ever after"
-
-Return ONLY the reflection text. No quotes, no preamble, no labels, no explanation.`;
+async function persistToCache(cacheKey: string, text: string): Promise<void> {
+  // Non-fatal — cache failures don't break the response, the next request
+  // just calls Gemini again.
+  try {
+    await redis.set(cacheKey, text, 'EX', CACHE_TTL_SECONDS);
+  } catch (err: any) {
+    logger.warn({ err: err?.message, cacheKey }, '[DailyThought] Redis write failed (non-fatal)');
+  }
 }
 
-function cleanThought(text: string): string {
-  return text
-    .trim()
-    .replace(/^["'`*\s]+|["'`*\s]+$/g, '')
-    .replace(/^(thought|reflection|daily thought|here'?s? (a|one|your)?( a)? reflection)\s*:?\s*/i, '')
-    .trim();
+function buildPrompt({ user1Name, user2Name, anniversaryDate }: GenerateOpts, antiPatternHint?: string): string {
+  const since = anniversaryDate ? `, together since ${anniversaryDate}` : '';
+  const hintBlock = antiPatternHint
+    ? `\n\nYour previous response had patterns to avoid. ${antiPatternHint}\n\nWrite a fresh response that fixes those issues.`
+    : '';
+
+  // The voice we want: a friend saying something true and small at a coffee
+  // shop, not a motivational coach. Specific, slightly ordinary, slightly
+  // imperfect. We name the couple in the prompt but DO NOT have Gemini
+  // address them — the output uses universal framing ("we", "couples",
+  // "love") so it complements the LoveBot card (which IS personal).
+  return `You're writing one short observation about long-term relationships for a private couples app. The couple is ${user1Name} and ${user2Name}${since}.
+
+Imagine a friend saying something true and small about love at a coffee shop. Not motivational. Not advice. Just a real thought from someone who's been in a relationship for a while.
+
+Rules:
+- One short sentence. Roughly 50–140 characters.
+- Universal framing — write about "couples", "love", "we", "the small things". Don't address either partner directly.
+- Be CONCRETE — a specific small observation, not an abstraction.
+- Sound like something a real person would actually say, not write.
+
+Avoid these patterns:
+- No em-dashes (—). Use commas or periods.
+- No semicolons. Use periods.
+- No "X isn't Y, it's Z" antithetical structures.
+- No openings like "Real love is", "True love is", or "Love isn't".
+- No words like: soulmate, commitment, perseverance, the journey, the foundation, the chapter, the work of love, ride or die.
+- Don't end with motivational appendages like "every single day" or "always" or "forever".${hintBlock}
+
+Return ONLY the observation. No quotes, no labels, no explanation.`;
 }
 
 function pickFallback(coupleId: string, dateKey: string): string {
