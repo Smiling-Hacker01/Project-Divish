@@ -25,15 +25,21 @@ export const getSettings = async (req: Request, res: Response, next: NextFunctio
       return;
     }
 
-    // Get all unused AND used reasons added by THIS user
+    // The "Your reasons" queue is the set of reasons this user has authored
+    // that are still awaiting delivery (used: false). Already-delivered
+    // reasons are intentionally excluded — they're not part of the queue any
+    // more and showing them confuses the "what will my partner receive next"
+    // mental model. Ordered ASC by createdAt so reasons[0] === the next one
+    // the cron will actually pick (matches the cron's `orderBy: createdAt asc`
+    // selection in jobs/lovebot.cron.ts).
     const reasons = await prisma.loveReason.findMany({
-      where: { coupleId, authorId: userId },
-      orderBy: { createdAt: 'desc' },
+      where: { coupleId, authorId: userId, used: false },
+      orderBy: { createdAt: 'asc' },
       select: { id: true, reason: true, forUserId: true, createdAt: true },
     });
 
     const isCreator = couple.userAId === userId;
-    
+
     // We send back "mode" and "time" to match what the frontend understands for the current user
     const mode = isCreator ? couple.userALoveBotMode : couple.userBLoveBotMode;
     const time = isCreator ? couple.userALoveBotTime : couple.userBLoveBotTime;
