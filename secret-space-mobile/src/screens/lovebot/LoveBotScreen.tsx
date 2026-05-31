@@ -1,20 +1,45 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { FlatList, Modal, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import ReanimatedSwipeable, { SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { ScreenContainer, InlineHeader, Text, Card, Button, SwitchRow } from '@/components';
 import { useTheme } from '@/theme';
 import { lovebotApi } from '@/api';
-import { LoveBotSettings } from '@/types/api';
+import { LoveBotSettings, LoveBotReason } from '@/types/api';
+import { useAuth } from '@/context/AuthContext';
+
+// Partner's first name only — keeps the section header compact even when the
+// stored partner name is "Vishal Singh Kushwaha" or similar. Falls back to a
+// neutral pronoun so the screen never reads as broken before the auth profile
+// has loaded.
+function firstName(name: string | undefined | null): string {
+  if (!name) return 'them';
+  return name.trim().split(/\s+/)[0] || 'them';
+}
+
+// Reason row height + visible-row count drive the bounded FlatList container.
+// 76dp/row gives 2 lines of body text + 12dp vertical padding; 3 rows visible
+// keeps the queue prominent without dominating the screen, leaving the Add
+// Reason button and Up Next card visible without scrolling on most phones.
+const REASON_ROW_HEIGHT = 76;
+const REASON_LIST_VISIBLE_ROWS = 3;
 
 export function LoveBotScreen() {
   const theme = useTheme();
   const navigation = useNavigation<any>();
+  const { user } = useAuth();
   const [settings, setSettings] = useState<LoveBotSettings | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
+  // Per-row imperative handle into the Swipeable, used to programmatically
+  // close any open row when the user taps elsewhere (e.g. when starting a
+  // delete on a second row, the first one auto-closes).
+  const swipeableRefs = useRef<Map<string, SwipeableMethods | null>>(new Map());
+
+  const partnerFirstName = firstName(user?.partnerName);
 
   const formatTime = (hhmm: string | undefined) => {
     if (!hhmm) return '9:30 AM';
@@ -218,58 +243,119 @@ export function LoveBotScreen() {
           onValueChange={togglePartner}
         />
 
+        {/* Direction-aware section header. The bot you configure on this screen
+            sends reasons FROM you TO your partner — making that direction
+            explicit (rather than calling it generically "Your reasons") makes
+            the queue's purpose obvious and pre-empts the most common confusion
+            about why your own Home screen doesn't show what's in this list. */}
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
           <Text variant="overline" color="muted" style={{ flex: 1 }}>
-            Your reasons
+            You → {partnerFirstName}
           </Text>
           <Text variant="caption" color="muted">
-            {settings?.reasons.length ?? 0} TOTAL
+            {(settings?.reasons.length ?? 0) === 0
+              ? 'EMPTY'
+              : `${settings?.reasons.length} IN QUEUE`}
           </Text>
         </View>
 
-        <View style={{ gap: 8 }}>
-          {(settings?.reasons ?? []).map((r) => (
-            <View
-              key={r.id}
-              style={[
-                styles.reasonRow,
-                { backgroundColor: theme.colors.surface, borderColor: theme.colors.hairline },
-              ]}
-            >
-              <Feather name="more-vertical" size={14} color={theme.colors.muted} style={{ opacity: 0.5 }} />
-              <Text variant="serifBody" style={{ flex: 1, marginLeft: 12, fontSize: 16 }} numberOfLines={1}>
-                {r.text}
-              </Text>
-              <Pressable onPress={() => removeReason(r.id)} hitSlop={8}>
-                <Feather name="trash-2" size={16} color={theme.colors.muted} />
-              </Pressable>
-            </View>
-          ))}
-          {settings?.reasons.length === 0 && (
-            <Text variant="bodySmall" color="muted" align="center" style={{ paddingVertical: 24 }}>
-              Add a reason to get started.
+        {/* Reasons queue — bounded-height FlatList so the section never grows
+            past ~3 visible rows even as the queue scales. Outside the inner
+            list, the page ScrollView keeps the schedule controls, Add Reason
+            button, and Up Next preview reachable without paging through the
+            queue.
+            • nestedScrollEnabled is required on Android for the inner
+              FlatList to take scroll gestures away from the outer ScrollView
+              once finger contact lands inside the list's bounds.
+            • scrollEnabled is toggled off when the queue fits comfortably to
+              suppress a phantom "rubber band" feel on short lists. */}
+        {(settings?.reasons?.length ?? 0) > 0 ? (
+          <View
+            style={[
+              styles.reasonListWrap,
+              { backgroundColor: theme.colors.surface, borderColor: theme.colors.hairline },
+            ]}
+          >
+            <FlatList
+              data={settings?.reasons ?? []}
+              keyExtractor={(r) => r.id}
+              renderItem={({ item, index }) => (
+                <ReasonRow
+                  reason={item}
+                  index={index}
+                  total={settings?.reasons.length ?? 0}
+                  onDelete={removeReason}
+                  registerRef={(ref) => swipeableRefs.current.set(item.id, ref)}
+                  onSwipeOpen={() => {
+                    swipeableRefs.current.forEach((s, id) => {
+                      if (id !== item.id) s?.close();
+                    });
+                  }}
+                />
+              )}
+              ItemSeparatorComponent={() => (
+                <View style={[styles.reasonSeparator, { backgroundColor: theme.colors.hairline }]} />
+              )}
+              style={styles.reasonList}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+              scrollEnabled={(settings?.reasons.length ?? 0) > REASON_LIST_VISIBLE_ROWS}
+            />
+          </View>
+        ) : (
+          <View
+            style={[
+              styles.reasonEmptyWrap,
+              { backgroundColor: theme.colors.surface, borderColor: theme.colors.hairline },
+            ]}
+          >
+            <Feather name="feather" size={20} color={theme.colors.muted} style={{ marginBottom: 8 }} />
+            <Text variant="bodySmall" color="muted" align="center" style={{ lineHeight: 20 }}>
+              Your queue is empty. {partnerFirstName} will still receive an auto-written reason at the scheduled time — add your own to send something personal instead.
             </Text>
-          )}
-        </View>
+          </View>
+        )}
 
         <Button label="Add a reason" leadingIcon="plus" fullWidth onPress={() => navigation.navigate('AddReason')} />
 
-        {/* Preview */}
+        {/* Up Next preview — mirrors what the cron will pick at the next delivery
+            window. Backend already returns reasons[] filtered to unused + ordered
+            ASC by createdAt, so reasons[0] is the actual next-to-deliver row.
+            When the queue is empty we don't fabricate a preview — the cron will
+            auto-generate a fresh Gemini line at delivery time and the user can't
+            know its text in advance, so we surface that fact honestly. */}
         <Card variant="tinted-gold" style={{ marginTop: 8 }}>
           <Text variant="overline" color="muted">
             Up next
           </Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}>
-            <View style={[styles.appIcon, { backgroundColor: theme.colors.surface }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginTop: 12 }}>
+            <View style={[styles.appIcon, { backgroundColor: theme.colors.surface, marginTop: 2 }]}>
               <Feather name="heart" size={14} color={theme.colors.primary} />
             </View>
             <View style={{ marginLeft: 10, flex: 1 }}>
               <Text variant="caption" color="muted">
-                The Secret Space · {settings?.time ?? '9:30 AM'}
+                The Secret Space · {formatTime(settings?.time)}
               </Text>
-              <Text variant="bodySmall" weight="medium" style={{ marginTop: 2 }} numberOfLines={2}>
-                Because {settings?.reasons[0]?.text ?? 'they smile when you walk into a room.'}
-              </Text>
+              {settings?.reasons[0] ? (
+                <Text
+                  variant="bodySmall"
+                  weight="medium"
+                  style={{ marginTop: 4, lineHeight: 20 }}
+                  numberOfLines={3}
+                >
+                  {settings.reasons[0].text}
+                </Text>
+              ) : (
+                <Text
+                  variant="bodySmall"
+                  color="muted"
+                  italic
+                  style={{ marginTop: 4, lineHeight: 20 }}
+                  numberOfLines={3}
+                >
+                  Your bot will write one when it's time. Add your own to override.
+                </Text>
+              )}
             </View>
           </View>
         </Card>
@@ -338,6 +424,92 @@ export function LoveBotScreen() {
         </Pressable>
       </Modal>
     </ScreenContainer>
+  );
+}
+
+// ReasonRow — a single entry in the queue. The leading badge is the row's
+// delivery order (1, 2, 3…), and on row 0 it becomes a rose-tinted "NEXT" pill
+// to mirror what the Up Next card previews. Swipe-left reveals a destructive
+// delete action; the trash icon is dropped from the row itself so the row
+// stays visually clean.
+//
+// We use react-native-gesture-handler's ReanimatedSwipeable (not the legacy
+// Swipeable) because the legacy component is deprecated as of gesture-handler
+// 2.20 and emits a runtime warning every render. The reanimated variant has
+// the same surface plus smoother transitions on the new Architecture.
+function ReasonRow({
+  reason,
+  index,
+  total,
+  onDelete,
+  registerRef,
+  onSwipeOpen,
+}: {
+  reason: LoveBotReason;
+  index: number;
+  total: number;
+  onDelete: (id: string) => void;
+  registerRef: (ref: SwipeableMethods | null) => void;
+  onSwipeOpen: () => void;
+}) {
+  const theme = useTheme();
+  const isNext = index === 0;
+
+  // The right-action panel that's revealed by the swipe gesture. We render
+  // the delete affordance ourselves rather than relying on the default
+  // styling so it matches the rest of the app's destructive-action treatment
+  // (rose-tinted background, white icon, full-row-height alignment).
+  const renderRightActions = () => (
+    <Pressable
+      onPress={() => onDelete(reason.id)}
+      style={[styles.reasonDeleteAction, { backgroundColor: theme.colors.destructive }]}
+      accessibilityRole="button"
+      accessibilityLabel={`Delete reason ${index + 1} of ${total}`}
+    >
+      <Feather name="trash-2" size={18} color="#fff" />
+      <Text variant="caption" style={{ color: '#fff', marginTop: 4 }} weight="semibold">
+        Delete
+      </Text>
+    </Pressable>
+  );
+
+  return (
+    <ReanimatedSwipeable
+      ref={registerRef}
+      renderRightActions={renderRightActions}
+      onSwipeableWillOpen={onSwipeOpen}
+      friction={2}
+      rightThreshold={36}
+      overshootRight={false}
+    >
+      <View style={[styles.reasonRow, { backgroundColor: theme.colors.surface }]}>
+        {isNext ? (
+          <View style={[styles.reasonBadgeNext, { backgroundColor: theme.colors.primary }]}>
+            <Text variant="caption" weight="semibold" style={{ color: '#fff', fontSize: 10, letterSpacing: 0.5 }}>
+              NEXT
+            </Text>
+          </View>
+        ) : (
+          <View
+            style={[
+              styles.reasonBadgeNumber,
+              { backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.hairline },
+            ]}
+          >
+            <Text variant="caption" color="muted" weight="semibold">
+              {index + 1}
+            </Text>
+          </View>
+        )}
+        <Text
+          variant="serifBody"
+          style={{ flex: 1, marginLeft: 12, fontSize: 15, lineHeight: 21 }}
+          numberOfLines={2}
+        >
+          {reason.text}
+        </Text>
+      </View>
+    </ReanimatedSwipeable>
   );
 }
 
@@ -423,13 +595,54 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  reasonListWrap: {
+    borderRadius: 16,
+    borderWidth: 1,
+    overflow: 'hidden',
+    maxHeight: REASON_ROW_HEIGHT * REASON_LIST_VISIBLE_ROWS,
+  },
+  reasonList: {
+    flexGrow: 0,
+  },
+  reasonSeparator: {
+    height: StyleSheet.hairlineWidth,
+    marginLeft: 16 + 32 + 12, // align with text column: row padding + badge + gap
+  },
   reasonRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    minHeight: 56,
+    minHeight: REASON_ROW_HEIGHT,
     paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  reasonBadgeNext: {
+    minWidth: 36,
+    height: 22,
+    borderRadius: 11,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reasonBadgeNumber: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 4,
+  },
+  reasonDeleteAction: {
+    width: 88,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reasonEmptyWrap: {
     borderRadius: 16,
     borderWidth: 1,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    alignItems: 'center',
   },
   appIcon: { width: 28, height: 28, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
   infoScrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' },
