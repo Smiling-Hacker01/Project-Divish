@@ -16,6 +16,7 @@ import { Image as ExpoImage } from 'expo-image';
 import { Video, ResizeMode } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ScreenContainer, InlineHeader, Text, Button, EmptyState, GlassSurface, toast } from '@/components';
 import { useTheme } from '@/theme';
 import { vaultApi } from '@/api';
@@ -36,6 +37,12 @@ const PAGE_SIZE = 30;
 export function VaultGridScreen() {
   const theme = useTheme();
   const navigation = useNavigation<any>();
+  // Safe-area insets drive both the bulk progress card (pinned below the
+  // status bar + InlineHeader) and the bulk action bar (sits comfortably
+  // above the floating tab bar AND the home indicator / gesture pill).
+  // Reading them via the hook means each device gets the right offsets
+  // without hardcoded constants that drift on edge-to-edge phones.
+  const insets = useSafeAreaInsets();
   const [items, setItems] = useState<VaultItem[]>([]);
   const [previewIdx, setPreviewIdx] = useState<number | null>(null);
   // Long-press on a grid tile opens an action sheet for "save to gallery /
@@ -59,12 +66,30 @@ export function VaultGridScreen() {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   // Sequential bulk-download state. progress is { current, total } during a
-  // batch and null otherwise. cancelRef is read inside the loop so a user can
-  // abort a long batch mid-way without us trying to set state on a
-  // potentially-unmounted screen.
+  // batch and null otherwise.
+  //   bulkCancelRef — set true to make the loop exit at the top of the next
+  //     iteration. Driven by the user-tapped Cancel button AND by the unmount
+  //     cleanup below so a navigate-away always halts in-flight work.
+  //   mountedRef — read after every await in the bulk loops to guard against
+  //     setState/toast firing on an unmounted screen. RN won't crash on stale
+  //     setState today but logs a warning and the toast still fires orphaned
+  //     above the next screen, which is the user-visible bug we're closing.
   const [bulkProgress, setBulkProgress] = useState<{ current: number; total: number } | null>(null);
   const bulkCancelRef = useRef(false);
+  const mountedRef = useRef(true);
   const bulkActionBarAnim = useRef(new Animated.Value(0)).current;
+
+  // Mount/unmount tracking. Flipping both flags on unmount is intentional:
+  // mountedRef guards setState/toast calls, bulkCancelRef tells the loop to
+  // stop walking the list (no point doing more network work for a screen
+  // the user has navigated away from).
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      bulkCancelRef.current = true;
+    };
+  }, []);
 
   // Race-protection epoch: bumped on every fresh load so stale responses can't
   // overwrite a more recent page.
@@ -213,9 +238,15 @@ export function VaultGridScreen() {
     let permissionDenied = false;
 
     for (let i = 0; i < targets.length; i++) {
+      // Bail early if the user tapped Cancel OR the screen has unmounted
+      // (cleanup effect flips bulkCancelRef on unmount, so we don't need
+      // a separate mountedRef check here).
       if (bulkCancelRef.current) break;
       const item = targets[i];
-      setBulkProgress({ current: i, total: targets.length });
+      // Guard setState behind mountedRef so a navigate-away between
+      // iterations doesn't fire setState on an unmounted screen. The await
+      // below is the actual yield point where the unmount can land.
+      if (mountedRef.current) setBulkProgress({ current: i, total: targets.length });
       // suppressToast lets the loop decide what to show at the end. The
       // service still surfaces a permission toast on the first denial
       // because there's no way to proceed past that without it.
@@ -231,6 +262,11 @@ export function VaultGridScreen() {
         break;
       } else failed++;
     }
+
+    // Post-loop cleanup + result toast — skip entirely if the screen has
+    // unmounted since the user can't see a toast for a screen they left,
+    // and setState on unmounted is the original warning we're avoiding.
+    if (!mountedRef.current) return;
 
     setBulkProgress(null);
     exitSelectMode();
@@ -257,7 +293,10 @@ export function VaultGridScreen() {
 
   // Bulk delete — sequential REST calls. Optimistically remove from the
   // local list as each one succeeds so the grid visibly shrinks during the
-  // batch. Errors fall through to the aggregated toast at the end.
+  // batch. Failed IDs stay in the selection so the user can hit Delete
+  // again to retry just the failures, instead of having to re-tap every
+  // tile from scratch. A 401 breaks the loop immediately (no point firing
+  // 19 more calls that will all 401 too).
   const runBulkDelete = useCallback(() => {
     if (selectedIds.size === 0) return;
     const count = selectedIds.size;
@@ -271,24 +310,57 @@ export function VaultGridScreen() {
           style: 'destructive',
           onPress: async () => {
             const targets = Array.from(selectedIds);
+            const failedIds: string[] = [];
             let deleted = 0;
-            let failed = 0;
+            let unauthorized = false;
+
             for (const id of targets) {
+              if (bulkCancelRef.current) {
+                // Unmount or explicit cancel — preserve remaining selections.
+                failedIds.push(id);
+                continue;
+              }
               try {
                 await vaultApi.remove(id);
-                setItems((prev) => prev.filter((p) => p.id !== id));
+                if (mountedRef.current) {
+                  setItems((prev) => prev.filter((p) => p.id !== id));
+                }
                 deleted++;
-              } catch {
-                failed++;
+              } catch (err: any) {
+                failedIds.push(id);
+                // 401 means the vault token has expired or been revoked
+                // mid-batch — pounding the server with the remaining IDs
+                // will just stack up 401s. Break and let the user re-auth
+                // before retrying.
+                if (err?.response?.status === 401) {
+                  unauthorized = true;
+                  // Carry over the rest of the targets that we never tried.
+                  const remainingIndex = targets.indexOf(id) + 1;
+                  for (let j = remainingIndex; j < targets.length; j++) {
+                    failedIds.push(targets[j]);
+                  }
+                  break;
+                }
               }
             }
-            exitSelectMode();
-            if (failed === 0) {
+
+            // If the screen unmounted mid-delete we have nothing more to do.
+            if (!mountedRef.current) return;
+
+            if (failedIds.length === 0) {
+              exitSelectMode();
               toast.success(`Removed ${deleted}.`);
-            } else if (deleted === 0) {
-              toast.error(`Couldn't remove these. Try again.`);
             } else {
-              toast.info(`Removed ${deleted} of ${targets.length}. ${failed} failed.`);
+              // Keep failures in the selection so the user can retry just
+              // those without re-tapping every tile.
+              setSelectedIds(new Set(failedIds));
+              if (unauthorized) {
+                toast.error(`Couldn't remove these. Unlock the vault and try again.`);
+              } else if (deleted === 0) {
+                toast.error(`Couldn't remove these. Try again.`);
+              } else {
+                toast.info(`Removed ${deleted} of ${targets.length}. ${failedIds.length} still selected.`);
+              }
             }
           },
         },
@@ -299,16 +371,25 @@ export function VaultGridScreen() {
   const handleSheetSave = useCallback(async () => {
     if (!actionSheetItem || actionSheetSaving) return;
     setActionSheetSaving(true);
-    await downloadToGallery({
-      itemId: actionSheetItem.id,
-      url: actionSheetItem.url,
-      type: actionSheetItem.type,
-    });
-    setActionSheetSaving(false);
-    // Dismiss the sheet — the toast surfaced by downloadToGallery tells the
-    // user what happened. Permission-denied / error toasts render above the
-    // dismissed sheet either way.
-    setActionSheetItem(null);
+    try {
+      await downloadToGallery({
+        itemId: actionSheetItem.id,
+        url: actionSheetItem.url,
+        type: actionSheetItem.type,
+      });
+    } finally {
+      // try/finally guard against the saving flag getting stuck `true` if
+      // downloadToGallery ever throws (today it always resolves with a
+      // DownloadResult, but the finally block is cheap insurance against a
+      // future refactor that introduces a throw path).
+      if (mountedRef.current) {
+        setActionSheetSaving(false);
+        // Dismiss the sheet — the toast surfaced by downloadToGallery tells
+        // the user what happened. Permission-denied / error toasts render
+        // above the dismissed sheet either way.
+        setActionSheetItem(null);
+      }
+    }
   }, [actionSheetItem, actionSheetSaving]);
 
   useFocusEffect(
@@ -910,8 +991,13 @@ export function VaultGridScreen() {
         />
       )}
 
-      {/* Bulk-batch progress card — pinned to the top of the screen while a
-          batch download is in flight. Above everything except the lightbox.
+      {/* Bulk-batch progress card — pinned just below the status bar +
+          InlineHeader while a batch download is in flight. The top offset
+          is composed from useSafeAreaInsets().top (status-bar / notch on
+          iPhone, dynamic island, Android status bar) + 64dp which clears
+          the InlineHeader's content row, so the card lands at a
+          consistent visual position on every device regardless of how
+          tall the notch / hole-punch / status bar is.
           A Cancel button lets the user stop the loop mid-way; the loop
           drains the current item then exits. */}
       {bulkProgress && (
@@ -921,7 +1007,7 @@ export function VaultGridScreen() {
             {
               backgroundColor: theme.colors.surface,
               borderColor: theme.colors.hairline,
-              top: 64,
+              top: insets.top + 64,
             },
           ]}
         >
@@ -943,10 +1029,20 @@ export function VaultGridScreen() {
       )}
 
       {/* Bottom bulk action bar — slides in / out via the Animated value. The
-          bar floats above the existing floating tab bar; we don't try to
-          hide the tab bar in select mode (that needs parent-navigator
-          plumbing), but a higher elevation + opaque surface keeps the
-          buttons readable. */}
+          bar floats above the floating tab bar AND the home indicator on
+          edge-to-edge gesture-nav devices. Bottom-offset composition:
+            • The tab bar sits at `Math.max(insets.bottom, 12) + 12` from
+              the screen edge with internal height 64, so its TOP edge is at
+              `Math.max(insets.bottom, 12) + 76`.
+            • This bar sits 12dp above that top edge → bottom offset =
+              `Math.max(insets.bottom, 12) + 88`.
+            • On a notched iPhone (insets.bottom ≈ 34) → 122dp clearance.
+              On a flat-bottomed Android (insets.bottom = 0) → 100dp.
+              On a Pro Max in gesture mode (insets.bottom ≈ 34) → 122dp,
+              comfortably above the home indicator instead of the prior
+              7-21dp squeeze.
+          Match to the FloatingTabBar's formula in navigation/MainTabs.tsx
+          so the two stay in lockstep if either gets retuned. */}
       <Animated.View
         pointerEvents={selectMode ? 'auto' : 'none'}
         style={[
@@ -954,7 +1050,7 @@ export function VaultGridScreen() {
           {
             backgroundColor: theme.colors.surface,
             borderTopColor: theme.colors.hairline,
-            bottom: theme.bottomNavReserve - 12,
+            bottom: Math.max(insets.bottom, 12) + 88,
             opacity: bulkActionBarAnim,
             transform: [
               {
