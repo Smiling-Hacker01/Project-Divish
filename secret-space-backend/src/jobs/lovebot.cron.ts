@@ -4,6 +4,7 @@ import redis from '../config/redis';
 import logger from '../config/logger';
 import { sendPush } from '../services/notification.service';
 import { generateLoveReason } from '../services/loveReasonGenerator';
+import { loveBotDelivered } from '../copy/notifications';
 
 /**
  * LoveBot Cron Job
@@ -265,11 +266,12 @@ async function processUserCronRule(input: CronRuleInput): Promise<void> {
   });
 
   const sender = await prisma.user.findUnique({ where: { id: senderId }, select: { name: true } });
+  const push = loveBotDelivered(sender?.name ?? 'your partner');
 
   const pushResult = await sendPush(
     recipientId,
-    '💌 Love Note Delivered',
-    `You have a new message from ${sender?.name} 💌`,
+    push.title,
+    push.body ?? '',
     { type: 'lovebot', url: '/home' }
   );
 

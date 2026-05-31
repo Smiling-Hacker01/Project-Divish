@@ -10,6 +10,7 @@ import { useTheme } from '@/theme';
 import { lovebotApi } from '@/api';
 import { LoveBotSettings, LoveBotReason } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
+import { loveBotInfo } from '@/copy';
 
 // Partner's first name only — keeps the section header compact even when the
 // stored partner name is "Vishal Singh Kushwaha" or similar. Falls back to a
@@ -128,10 +129,10 @@ export function LoveBotScreen() {
             </LinearGradient>
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text variant="h3" style={{ fontSize: 18 }}>
-                Sweet messages on autopilot
+                Your reasons, on a schedule.
               </Text>
               <Text variant="bodySmall" color="muted" style={{ marginTop: 4 }}>
-                Schedule reasons your partner will receive without you lifting a finger.
+                {loveBotInfo.intro}
               </Text>
             </View>
           </View>
@@ -311,7 +312,7 @@ export function LoveBotScreen() {
           >
             <Feather name="feather" size={20} color={theme.colors.muted} style={{ marginBottom: 8 }} />
             <Text variant="bodySmall" color="muted" align="center" style={{ lineHeight: 20 }}>
-              Your queue is empty. {partnerFirstName} will still receive an auto-written reason at the scheduled time — add your own to send something personal instead.
+              The queue is empty. {partnerFirstName} will still get one at the scheduled time, written for you. Add your own to send something personal instead.
             </Text>
           </View>
         )}
@@ -388,31 +389,13 @@ export function LoveBotScreen() {
               </Text>
             </View>
             <Text variant="bodySmall" color="muted" style={{ marginBottom: 20 }}>
-              A gentle little nudge that sends your partner one of the reasons you love
-              them — automatically, without you ever forgetting.
+              {loveBotInfo.intro}
             </Text>
 
-            <InfoRow
-              icon="clock"
-              title="Daily mode"
-              body="One reason is delivered at the same time every day. Predictable, dependable, like a morning coffee for the heart."
-            />
-            <InfoRow
-              icon="star"
-              title="Surprise mode"
-              body="Random delivery throughout the week — never know when, but always when it's needed."
-            />
-            <InfoRow
-              icon="users"
-              title="Both can contribute"
-              body="Toggle 'Let them add reasons too' and your partner can drop their own reasons into the queue — a private collaboration."
-            />
-            <InfoRow
-              icon="bell"
-              title="How it's delivered"
-              body="Each reason arrives as a push notification on your partner's phone, and shows on their Home screen for the day."
-              last
-            />
+            <InfoRow icon="clock" title="Daily" body={loveBotInfo.modes.daily} />
+            <InfoRow icon="star" title="Surprise" body={loveBotInfo.modes.surprise} />
+            <InfoRow icon="users" title="Both can add" body={loveBotInfo.modes.contribute} />
+            <InfoRow icon="bell" title="How it lands" body={loveBotInfo.modes.delivery} last />
 
             <Button
               label="Got it"

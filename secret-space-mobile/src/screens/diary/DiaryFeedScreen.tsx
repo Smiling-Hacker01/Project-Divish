@@ -177,9 +177,9 @@ export function DiaryFeedScreen() {
       ) : filtered.length === 0 ? (
         <EmptyState
           icon="book-open"
-          title="Your story starts here"
-          body="Capture little moments and milestones together."
-          cta={{ label: 'Write the first entry', onPress: () => navigation.navigate('DiaryCreate') }}
+          title="Nothing here yet."
+          body="Write today down. Even one sentence counts."
+          cta={{ label: 'Write something', onPress: () => navigation.navigate('DiaryCreate') }}
         />
       ) : (
         <FlatList

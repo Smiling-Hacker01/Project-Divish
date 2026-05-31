@@ -511,9 +511,9 @@ export function VaultGridScreen() {
       ) : items.length === 0 ? (
         <EmptyState
           icon="lock"
-          title="Your private space is empty"
-          body="Add a moment that's just for the two of you."
-          cta={{ label: 'Add your first memory', onPress: () => setShowUploadSheet(true) }}
+          title="Nothing in here yet."
+          body="Add a photo or video. It stays just between the two of you."
+          cta={{ label: 'Add something', onPress: () => setShowUploadSheet(true) }}
         />
       ) : (
         <FlatList

@@ -86,9 +86,21 @@ export function CouponsListScreen() {
       {filtered.length === 0 ? (
         <EmptyState
           icon="tag"
-          title="No coupons here yet"
-          body={tab === 'fulfill' ? 'Promises you owe will appear here.' : 'Create one for your partner.'}
-          cta={{ label: 'Create one →', onPress: () => navigation.navigate('CouponCreate') }}
+          title={
+            tab === 'fulfill'
+              ? 'Nothing to fulfill right now.'
+              : tab === 'received'
+                ? 'No coupons from them yet.'
+                : "You haven't made any coupons."
+          }
+          body={
+            tab === 'fulfill'
+              ? "Coupons they've redeemed will land here when they do."
+              : tab === 'received'
+                ? "Promises they make for you will show up here."
+                : 'Make one when you feel like it.'
+          }
+          cta={tab !== 'fulfill' ? { label: 'Make one', onPress: () => navigation.navigate('CouponCreate') } : undefined}
         />
       ) : (
         <FlatList
