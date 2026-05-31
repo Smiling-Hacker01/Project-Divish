@@ -16,3 +16,4 @@ export * from './BrandMark';
 export * from './SegmentedControl';
 export * from './SwitchRow';
 export * from './Emoji';
+export * from './Toast';
