@@ -13,6 +13,7 @@ import lovebotRoutes from './routes/lovebot.routes';
 import dashboardRoutes from './routes/dashboard.routes';
 import settingsRoutes from './routes/settings.routes';
 import chatRoutes from './routes/chat.routes';
+import adminRoutes from './routes/admin.routes';
 import { verifyJWT } from './middlewares/auth';
 import { errorHandler } from './middlewares/errorHandler';
 
@@ -48,6 +49,7 @@ app.use('/api/lovebot', lovebotRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/admin', adminRoutes);
 
 // ── Push Notification Diagnostic ──────────────────────────────────────────────
 // Auth-gated diagnostic that targets the *caller's* device. Returns Firebase config
