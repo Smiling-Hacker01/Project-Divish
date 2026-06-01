@@ -14,16 +14,36 @@ import { diaryQueue } from '@/services/diaryQueue';
 
 const USER_KEY = 'secretspace.user';
 const NOTIF_PREF_KEY = 'secretspace.notificationsEnabled';
+// Persisted onboarding gate: when true, the user has finished signup + MFA
+// but hasn't seen the CoupleCode reveal screen yet. isAuthenticated stays
+// false until this is cleared, which keeps the navigator on the AuthStack
+// so CoupleCode actually renders. Persisted so a mid-onboarding app kill
+// resumes correctly instead of stranding the user (token in storage but
+// CoupleCode never seen) on Splash.
+const ONBOARDING_KEY = 'secretspace.needsCoupleCodeReveal';
 
 interface AuthCtx {
   user: User | null;
   isAuthenticated: boolean;
   isBootstrapping: boolean;
   notificationsEnabled: boolean;
+  // True while a fresh initiator hasn't yet been shown their couple code.
+  // RootNavigator reads this to keep them on AuthStack post-MFA so the
+  // CoupleCode screen actually has a chance to render before they land on
+  // Home. Cleared by completeCoupleCodeReveal().
+  needsCoupleCodeReveal: boolean;
   setUser: (u: User | null) => Promise<void>;
   refreshProfile: () => Promise<void>;
   logout: () => Promise<void>;
   setNotificationsEnabled: (v: boolean) => Promise<void>;
+  // Called by OTPScreen after a SIGNUP-mode verify succeeds for a fresh
+  // initiator whose couple is still in 'waiting' state. Persists the user
+  // AND raises the onboarding flag in one go so RootNavigator doesn't
+  // briefly flip to Main and back.
+  completeSignup: (u: User) => Promise<void>;
+  // Called by CoupleCodeScreen / InvitePartnerScreen when the user is ready
+  // to leave the onboarding flow and enter the main app.
+  completeCoupleCodeReveal: () => Promise<void>;
 }
 
 const Context = createContext<AuthCtx | null>(null);
@@ -32,12 +52,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUserState] = useState<User | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [notificationsEnabled, setNotificationsEnabledState] = useState(true);
+  const [needsCoupleCodeReveal, setNeedsCoupleCodeRevealState] = useState(false);
   const pushInitForUserRef = useRef<string | null>(null);
 
   const setUser = useCallback(async (u: User | null) => {
     setUserState(u);
     if (u) await AsyncStorage.setItem(USER_KEY, JSON.stringify(u));
     else await AsyncStorage.removeItem(USER_KEY);
+  }, []);
+
+  // Atomic: persist user + raise onboarding flag in one path. Order matters —
+  // we set state for the flag first so React doesn't briefly evaluate
+  // isAuthenticated as `!!u && !false` (= true) on the next render before the
+  // flag write lands. By batching both setStates in the same synchronous
+  // block, React combines them into a single render where isAuthenticated
+  // evaluates to false (needsCoupleCodeReveal: true).
+  const completeSignup = useCallback(async (u: User) => {
+    setNeedsCoupleCodeRevealState(true);
+    setUserState(u);
+    await Promise.all([
+      AsyncStorage.setItem(USER_KEY, JSON.stringify(u)),
+      AsyncStorage.setItem(ONBOARDING_KEY, '1'),
+    ]);
+  }, []);
+
+  const completeCoupleCodeReveal = useCallback(async () => {
+    setNeedsCoupleCodeRevealState(false);
+    await AsyncStorage.removeItem(ONBOARDING_KEY);
   }, []);
 
   const refreshProfile = useCallback(async () => {
@@ -66,6 +107,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await diaryQueue.clear().catch(() => undefined);
     pushInitForUserRef.current = null;
     await authApi.logout();
+    // Clear the onboarding flag on logout too — the next account on this
+    // device should start clean rather than inheriting a half-finished
+    // signup from someone else.
+    setNeedsCoupleCodeRevealState(false);
+    await AsyncStorage.removeItem(ONBOARDING_KEY).catch(() => undefined);
     await setUser(null);
   }, [setUser]);
 
@@ -98,12 +144,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     prewarmBackend();
     (async () => {
       try {
-        const [storedUser, accessToken, notifPref] = await Promise.all([
+        const [storedUser, accessToken, notifPref, onboardingPending] = await Promise.all([
           AsyncStorage.getItem(USER_KEY),
           tokens.getAccess(),
           AsyncStorage.getItem(NOTIF_PREF_KEY),
+          AsyncStorage.getItem(ONBOARDING_KEY),
         ]);
         if (notifPref === '0') setNotificationsEnabledState(false);
+        // Restore the onboarding flag BEFORE the user object so that the
+        // first render after bootstrap evaluates isAuthenticated correctly.
+        if (onboardingPending === '1') setNeedsCoupleCodeRevealState(true);
         if (storedUser && accessToken) {
           setUserState(JSON.parse(storedUser));
           refreshProfile();
@@ -158,15 +208,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<AuthCtx>(
     () => ({
       user,
-      isAuthenticated: !!user,
+      // isAuthenticated is gated on the onboarding flag so a fresh signup
+      // doesn't blow past CoupleCode straight into Main. The flag is cleared
+      // by completeCoupleCodeReveal() once the user dismisses the screen.
+      isAuthenticated: !!user && !needsCoupleCodeReveal,
+      isBootstrapping,
+      notificationsEnabled,
+      needsCoupleCodeReveal,
+      setUser,
+      refreshProfile,
+      logout,
+      setNotificationsEnabled,
+      completeSignup,
+      completeCoupleCodeReveal,
+    }),
+    [
+      user,
+      needsCoupleCodeReveal,
       isBootstrapping,
       notificationsEnabled,
       setUser,
       refreshProfile,
       logout,
       setNotificationsEnabled,
-    }),
-    [user, isBootstrapping, notificationsEnabled, setUser, refreshProfile, logout, setNotificationsEnabled]
+      completeSignup,
+      completeCoupleCodeReveal,
+    ]
   );
 
   return <Context.Provider value={value}>{children}</Context.Provider>;
