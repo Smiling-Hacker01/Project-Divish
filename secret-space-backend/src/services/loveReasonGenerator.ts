@@ -24,8 +24,19 @@ import { humanize, recordOutcome } from './humanize';
  * practice for many months.
  */
 
+// Model name: gemini-2.5-flash. We were on gemini-1.5-flash until Google
+// sunset the 1.5 family — calls began returning 404 from the v1beta
+// endpoint with "models/gemini-1.5-flash is not found". 2.5-flash is the
+// current stable Flash workhorse: same generateContent endpoint shape, free
+// tier covers our peak usage (~2 requests/day at 2-user scale), and the
+// humanizer's anti-pattern rules generalize cleanly across the 2.x family.
+// We pin to the specific version rather than using `gemini-flash-latest`
+// because the alias can silently route to a different model generation
+// with different output characteristics that may require humanizer
+// re-tuning; an explicit pin gives us a controlled upgrade path when the
+// next deprecation hits.
 const GEMINI_API_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -119,6 +130,14 @@ async function callGemini(apiKey: string, prompt: string): Promise<string | null
           temperature: 0.9,
           topP: 0.95,
           maxOutputTokens: 120,
+          // Disable the 2.5-family's default "thinking" pass. With thinking
+          // enabled the model spends most of maxOutputTokens on internal
+          // reasoning tokens (verified: 189 thoughtsTokenCount vs. 6
+          // candidatesTokenCount for our prompt shape), leaving nothing for
+          // the actual response — we'd hit MAX_TOKENS with a half-sentence.
+          // Love-reason generation doesn't need reasoning; we want a single
+          // short creative line, so we explicitly opt out.
+          thinkingConfig: { thinkingBudget: 0 },
         },
         // Conservative safety thresholds. Couples-app context never needs
         // harassment / hate / sexual / dangerous content; if Gemini ever
