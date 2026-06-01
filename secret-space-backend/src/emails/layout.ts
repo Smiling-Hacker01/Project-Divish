@@ -17,21 +17,69 @@ import { brandHeader, preheader as preheaderEl } from './components';
  * conditional comments are how we ship Outlook-specific markup (mainly the
  * bulletproof button + the PPI override that prevents Outlook from
  * upscaling images to 120 DPI). Every other client ignores these.
+ *
+ * Optional gradient hero block: when `hero` is provided, the email renders
+ * a rose→gold gradient hero panel ABOVE the white content card, mirroring
+ * the splash screen's brand gradient. The hero is for templates that need
+ * visual identity (invites, partner-joined notifications, anniversary
+ * reminders); transactional emails like OTP omit it and use the standard
+ * brandHeader inside the white card.
  */
+export interface LayoutHero {
+  /** Small uppercase tracked label above the title (e.g. "THE SECRET SPACE"). */
+  eyebrow?: string;
+  /** Big serif headline rendered white on the gradient (e.g. "You're invited."). */
+  title: string;
+  /** Optional muted-white subtitle under the title. */
+  subtitle?: string;
+}
+
 export interface LayoutOptions {
   subject: string;
   preheader: string;
   /** The inner card content — composed from components.ts helpers. */
   content: string;
+  /** Optional rose→gold gradient hero block above the content card. */
+  hero?: LayoutHero;
   /** Footer note text. Defaults to a copy-aware year + privacy reminder. */
   footer?: string;
 }
 
-export function layout({ subject, preheader, content, footer }: LayoutOptions): string {
+export function layout({ subject, preheader, content, hero, footer }: LayoutOptions): string {
   const year = new Date().getUTCFullYear();
   const footerText =
     footer ??
     `The Secret Space · ${year}<br/>Keep this email private. Anything inside is meant only for you.`;
+
+  // Hero block renders a rose→gold gradient with white text. The bgcolor
+  // attribute provides the Outlook fallback (Word renderer doesn't handle
+  // CSS gradients — it just paints the solid rose underneath). Every other
+  // modern client renders the smooth gradient via the inline `background`
+  // declaration. The hero's bottom corners are flat (border-radius 0)
+  // because the white content card below it picks up the bottom radius —
+  // together they form a single visual unit with the corners only at top
+  // and bottom of the whole stack.
+  const heroBlock = hero
+    ? `
+          <tr>
+            <td class="ss-hero" align="center" bgcolor="${colors.accent}" style="background:${colors.accent}; background:linear-gradient(135deg, ${colors.accent} 0%, ${colors.accentGold} 100%); padding:56px 32px; border-radius:${sizes.borderRadius}px ${sizes.borderRadius}px 0 0;">
+              ${hero.eyebrow ? `<p style="font-family:${fonts.serif}; font-size:12px; letter-spacing:3px; color:rgba(255,255,255,0.85); margin:0 0 18px 0; text-transform:uppercase; font-weight:normal;">${escapeHtml(hero.eyebrow)}</p>` : ''}
+              <h1 class="ss-hero-title" style="font-family:${fonts.serif}; font-size:40px; color:#FFFFFF; margin:0; line-height:1.15; font-weight:normal;">
+                ${escapeHtml(hero.title)}
+              </h1>
+              ${hero.subtitle ? `<p style="font-family:${fonts.sans}; font-size:15px; color:rgba(255,255,255,0.92); margin:14px 0 0 0; line-height:1.5;">${escapeHtml(hero.subtitle)}</p>` : ''}
+            </td>
+          </tr>`
+    : '';
+
+  // When the hero is present we drop the small in-card brandHeader (it
+  // would duplicate the visual identity that the hero already establishes)
+  // AND we square off the top corners of the white card so it tucks under
+  // the hero seamlessly.
+  const cardRadius = hero
+    ? `0 0 ${sizes.borderRadius}px ${sizes.borderRadius}px`
+    : `${sizes.borderRadius}px`;
+  const inCardBrandHeader = hero ? '' : brandHeader();
 
   return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
@@ -61,10 +109,10 @@ export function layout({ subject, preheader, content, footer }: LayoutOptions): 
     <tr>
       <td align="center" style="padding:32px 16px;">
 
-        <table class="ss-container" role="presentation" border="0" cellpadding="0" cellspacing="0" width="${sizes.containerMax}" style="max-width:${sizes.containerMax}px; width:100%;">
+        <table class="ss-container" role="presentation" border="0" cellpadding="0" cellspacing="0" width="${sizes.containerMax}" style="max-width:${sizes.containerMax}px; width:100%;">${heroBlock}
           <tr>
-            <td class="ss-card" style="background:${colors.card}; border-radius:${sizes.borderRadius}px; padding:${sizes.cardPaddingDesktop};">
-              ${brandHeader()}
+            <td class="ss-card" style="background:${colors.card}; border-radius:${cardRadius}; padding:${sizes.cardPaddingDesktop};">
+              ${inCardBrandHeader}
               ${content}
             </td>
           </tr>

@@ -14,6 +14,8 @@ import { generateCoupleCode } from '../utils/coupleCode';
 import { getPopulatedUser } from '../utils/userPopulator';
 import { extractDescriptor, verifyFace } from '../services/face.service';
 import { generateOtp, OTP_EXPIRY_MINUTES, sendOtpEmail } from '../utils/otp';
+import { sendEmail } from '../emails';
+import { inviteEmail } from '../emails/templates';
 import {
   signupSchema,
   joinSchema,
@@ -22,6 +24,7 @@ import {
   faceVerifySchema,
   otpVerifySchema,
   refreshSchema,
+  sendInviteSchema,
 } from '../utils/validators';
 
 const SALT_ROUNDS = 12;
@@ -156,6 +159,151 @@ export const join = async (req: Request, res: Response, next: NextFunction): Pro
       res.status(409).json({ error: 'Email already registered' });
       return;
     }
+    next(err);
+  }
+};
+
+// ── POST /api/auth/send-invite ────────────────────────────────────────────────
+// Authenticated initiator (User A) sends a branded invitation email to their
+// partner containing the couple code, app install instructions, and a warm
+// human-voiced "X invited you to The Secret Space" framing. The endpoint is a
+// pure convenience layer over the existing /join flow — the recipient still
+// completes the existing JoinCodeScreen path on their device using the code
+// from the email; we don't issue an alternate token or create a pending
+// User B row server-side, so the existing /join atomicity and idempotency
+// guarantees are completely untouched.
+//
+// Eligibility:
+//   - Caller must be authenticated (full JWT, not temp)
+//   - Caller must be the creator (User A) of their couple
+//   - Couple must still be in 'waiting' state (User B has not yet joined)
+//
+// Rate limits (Redis-backed, per-couple and per-recipient-email):
+//   - Per-couple: 5 invites per 24h. Prevents accidental spam loops.
+//   - Per-email:  1 invite per 24h. Prevents repeated invite-bombing of the
+//                 same address (matters because invitees could be third
+//                 parties if the inviter typo'd the email).
+//
+// Security posture: the email contains the same couple code the inviter
+// already has on their CoupleCodeScreen's native share sheet — same one-shot
+// code, consumed atomically by the first successful /join call, so a
+// wrong-email send does not give an attacker a re-usable credential. The
+// legitimate partner can be re-invited with the correct address.
+export const sendInvite = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const parsed = sendInviteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0].message });
+      return;
+    }
+    const { email: inviteeEmail } = parsed.data;
+    const userId = req.user!.userId;
+
+    // 1. Resolve the caller's couple + verify creator role + waiting state.
+    const couple = await prisma.couple.findFirst({
+      where: { userAId: userId },
+      select: { id: true, coupleCode: true, status: true, userBId: true },
+    });
+
+    if (!couple) {
+      // Caller is not a couple creator — either they're a User B (joined an
+      // existing couple) or they have no couple yet. Either way the invite
+      // endpoint isn't applicable to them.
+      res.status(403).json({ error: 'Only the space creator can send invitations.' });
+      return;
+    }
+
+    if (couple.userBId || couple.status === 'active') {
+      res.status(409).json({ error: 'Your partner has already joined this space.' });
+      return;
+    }
+
+    // 2. Prevent the inviter from inviting their OWN email — small but
+    // common UX footgun that would just bounce around their own inbox.
+    const inviter = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true, email: true },
+    });
+    if (!inviter) {
+      // Shouldn't happen given verifyJWT, but defensive.
+      res.status(401).json({ error: 'Session expired. Please sign in again.' });
+      return;
+    }
+    if (inviter.email.toLowerCase() === inviteeEmail) {
+      res.status(400).json({ error: "That's your own email. Try your partner's address." });
+      return;
+    }
+
+    // 3. Rate limits — per-couple AND per-recipient, both 24h windows.
+    const coupleKey = `invite:rate:couple:${couple.id}`;
+    const emailKey = `invite:rate:email:${inviteeEmail}`;
+
+    const [coupleCount, emailExists] = await Promise.all([
+      redis.get(coupleKey).then((v) => (v ? Number(v) : 0)).catch(() => 0),
+      redis.get(emailKey).catch(() => null),
+    ]);
+
+    if (coupleCount >= 5) {
+      res.status(429).json({
+        error: "You've sent a lot of invites today. Try again tomorrow.",
+      });
+      return;
+    }
+    if (emailExists) {
+      res.status(429).json({
+        error: 'An invitation was already sent to that address today.',
+      });
+      return;
+    }
+
+    // 4. Send the email through the shared framework. APP_DOWNLOAD_URL is
+    // optional — when unset (pre-launch) the template uses softer copy that
+    // doesn't promise a clickable link. When set (post-Play-Store-launch)
+    // the template surfaces a real "Download Secret Space" CTA.
+    try {
+      const template = inviteEmail({
+        inviterName: inviter.name,
+        coupleCode: couple.coupleCode,
+        appDownloadUrl: process.env.APP_DOWNLOAD_URL || undefined,
+      });
+      await sendEmail({
+        to: inviteeEmail,
+        subject: template.subject,
+        html: template.html,
+        text: template.text,
+      });
+    } catch (err: any) {
+      logger.error(
+        { err: err?.message, coupleId: couple.id, inviteeEmail },
+        '[Auth] Invite email send failed'
+      );
+      // Don't burn the rate-limit budget if we never actually delivered the
+      // email — leave both Redis keys unset so the user can retry.
+      res.status(502).json({ error: "Couldn't send the invitation. Try again in a moment." });
+      return;
+    }
+
+    // 5. Record the send in Redis for rate limiting. Done AFTER successful
+    // delivery so a failed send is retry-able. The per-couple counter
+    // increments and the per-email key gets a 24h TTL.
+    const [, , ttl] = await Promise.all([
+      redis.incr(coupleKey),
+      redis.set(emailKey, '1', 'EX', 86_400),
+      redis.ttl(coupleKey).catch(() => -1),
+    ]);
+    // First increment on a fresh key has no TTL — set one. ttl === -1 means
+    // "key exists with no expiry" so we need to anchor a 24h window.
+    if (ttl === -1) {
+      await redis.expire(coupleKey, 86_400).catch(() => undefined);
+    }
+
+    logger.info(
+      { coupleId: couple.id, inviterId: userId, inviteeEmail },
+      '[Auth] Partner invitation sent'
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
     next(err);
   }
 };

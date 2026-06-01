@@ -6,6 +6,7 @@ import { SignUpScreen } from '@/screens/auth/SignUpScreen';
 import { OTPScreen } from '@/screens/auth/OTPScreen';
 import { FaceEnrollScreen } from '@/screens/auth/FaceEnrollScreen';
 import { CoupleCodeScreen } from '@/screens/auth/CoupleCodeScreen';
+import { InvitePartnerScreen } from '@/screens/auth/InvitePartnerScreen';
 import { JoinCodeScreen } from '@/screens/auth/JoinCodeScreen';
 import { LoginScreen } from '@/screens/auth/LoginScreen';
 import { ForgotPasswordScreen } from '@/screens/auth/ForgotPasswordScreen';
@@ -20,6 +21,7 @@ export function AuthStack() {
       <Stack.Screen name="OTP" component={OTPScreen} />
       <Stack.Screen name="FaceEnroll" component={FaceEnrollScreen} />
       <Stack.Screen name="CoupleCode" component={CoupleCodeScreen} />
+      <Stack.Screen name="InvitePartner" component={InvitePartnerScreen} />
       <Stack.Screen name="JoinCode" component={JoinCodeScreen} />
       <Stack.Screen name="Login" component={LoginScreen} />
       <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
