@@ -33,9 +33,9 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'InvitePartner'>;
  * this screen blocks the rest of the app — the partner-pairing flow stays
  * exactly as it was, this screen is purely additive convenience.
  */
-export function InvitePartnerScreen({ navigation }: Props) {
+export function InvitePartnerScreen({}: Props) {
   const theme = useTheme();
-  const { user } = useAuth();
+  const { user, completeCoupleCodeReveal } = useAuth();
   const code = user?.coupleCode ?? '';
 
   const [email, setEmail] = useState('');
@@ -93,7 +93,16 @@ export function InvitePartnerScreen({ navigation }: Props) {
     });
   };
 
-  const onDone = () => navigation.goBack();
+  // After a successful invite send the natural next step is to land on the
+  // main app, not bounce back to CoupleCode and force the user to tap
+  // "I'll do this later" a second time. So Done CLEARS the onboarding
+  // flag — RootNavigator's isAuthenticated flips true and the user gets
+  // dropped on the Home tab. Before any send (or if they skip), the same
+  // button still clears the flag because the intent ("I'm done with
+  // onboarding") is the same either way.
+  const onDone = () => {
+    completeCoupleCodeReveal();
+  };
 
   return (
     <ScreenContainer scroll={false}>

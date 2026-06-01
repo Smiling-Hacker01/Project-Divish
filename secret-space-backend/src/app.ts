@@ -23,6 +23,18 @@ const app = express();
 // Required for express-rate-limit to work behind Railway's load balancer
 app.set('trust proxy', 1);
 
+// ── Disable response ETag for API routes ─────────────────────────────────────
+// Every /api/* endpoint serves dynamic per-user content (dashboard, chat
+// history, lovebot settings, vault list, coupons, etc.) — none of it is
+// cacheable. Express's default strong-etag computation was producing
+// matching etags across different content snapshots in some races, which
+// triggered native HTTP-cache 304s on the mobile client and made the
+// dashboard appear "stuck" on stale data (todaysReason null) even after
+// a successful refresh-reason call had populated the DB. Belt + suspenders
+// approach: turn off etag generation here, and the explicit Cache-Control
+// middleware below tells the client not to cache regardless.
+app.set('etag', false);
+
 // ── Request logging ────────────────────────────────────────────────────────────
 app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => (req as any).url === '/health' } }));
 
@@ -38,6 +50,22 @@ app.use(helmet());
 // Increase limit for base64 face images and vault uploads (~50MB)
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// ── No-store header on API routes ────────────────────────────────────────────
+// Stop the native HTTP cache on the mobile client (OkHttp on Android,
+// NSURLSession on iOS) from serving stale per-user content. With ETag
+// disabled above, the only remaining caching vector is heuristic freshness
+// — adding `Cache-Control: no-store` is the explicit "never cache this"
+// directive that every HTTP cache layer honors. Together they guarantee
+// every authenticated GET hits the server fresh, which matches how this
+// app actually works (writes from any device must be visible everywhere
+// within polling latency, not whenever a heuristic cache decides to
+// revalidate).
+app.use('/api', (_req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.set('Pragma', 'no-cache');
+  next();
+});
 
 // ── Routes ─────────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
