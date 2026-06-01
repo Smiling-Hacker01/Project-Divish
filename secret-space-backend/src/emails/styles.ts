@@ -34,6 +34,11 @@ export const colors = {
   // Brand accent (matches the mobile theme's primary rose).
   accent: '#E8637A',
 
+  // Secondary brand accent (matches the mobile theme's gold). Paired with
+  // `accent` in the gradient hero block at the top of emails that lean on
+  // brand identity (invites, partner-joined notifications, etc.).
+  accentGold: '#C9A96E',
+
   // Hairline / dividers — barely-visible warm grey.
   hairline: '#EDE7E1',
 
@@ -83,6 +88,8 @@ export function headStyles(): string {
         .ss-card { padding: ${sizes.cardPaddingMobile} !important; }
         .ss-code { font-size: 32px !important; letter-spacing: 6px !important; }
         .ss-heading { font-size: 24px !important; }
+        .ss-hero { padding: 40px 24px !important; }
+        .ss-hero-title { font-size: 32px !important; }
       }
 
       @media (prefers-color-scheme: dark) {
@@ -92,6 +99,9 @@ export function headStyles(): string {
         .ss-text-muted { color: #A09690 !important; }
         .ss-hairline { background-color: #2A2624 !important; }
         .ss-code-panel { background: #232024 !important; }
+        /* Hero stays rose→gold in dark mode — the gradient IS the brand
+           identity. Slight inset adjustment isn't needed; the white text
+           on the rose surface already has high enough contrast. */
       }
     </style>
   `;

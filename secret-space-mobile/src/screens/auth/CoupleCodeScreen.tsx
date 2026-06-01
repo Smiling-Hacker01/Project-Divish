@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Share, StyleSheet, View } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -11,7 +12,7 @@ import { AuthStackParamList } from '@/navigation/types';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'CoupleCode'>;
 
-export function CoupleCodeScreen({}: Props) {
+export function CoupleCodeScreen({ navigation }: Props) {
   const theme = useTheme();
   const { user, refreshProfile } = useAuth();
   const [copied, setCopied] = useState(false);
@@ -22,7 +23,13 @@ export function CoupleCodeScreen({}: Props) {
 
   const code = user?.coupleCode ?? '------';
 
-  const onCopy = () => {
+  const onCopy = async () => {
+    // Previously this only flipped the visual state without actually putting
+    // anything on the clipboard — the "COPIED" badge was a lie. Now we
+    // actually write the code so the user can paste it elsewhere if they
+    // skip the in-app invite flow.
+    if (code === '------') return;
+    await Clipboard.setStringAsync(code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -91,7 +98,26 @@ export function CoupleCodeScreen({}: Props) {
         </Card>
 
         <View style={{ marginTop: 32 }}>
-          <Button label="Share code" leadingIcon="share" fullWidth onPress={onShare} />
+          {/* Primary CTA: route to the dedicated InvitePartnerScreen which
+              offers the branded email + WhatsApp paths. This is the
+              recommended way to deliver the code to your partner. */}
+          <Button
+            label="Invite your partner"
+            leadingIcon="send"
+            fullWidth
+            onPress={() => navigation.navigate('InvitePartner')}
+          />
+          {/* Secondary CTA: native share sheet — kept as a fallback for
+              users who'd rather paste the code into something other than
+              email/WhatsApp (Telegram, iMessage, Signal, etc.). */}
+          <Button
+            label="Share code another way"
+            leadingIcon="share"
+            variant="secondary"
+            style={{ marginTop: 12 }}
+            fullWidth
+            onPress={onShare}
+          />
           <Button
             label="Continue without partner"
             variant="ghost"

@@ -27,6 +27,13 @@ export const joinSchema = signupSchema.omit({ anniversaryDate: true }).extend({
     .transform((v) => v.toUpperCase().trim()),
 });
 
+export const sendInviteSchema = z.object({
+  email: z
+    .string()
+    .email('Please enter a valid email address')
+    .transform((v) => v.toLowerCase().trim()),
+});
+
 export const loginSchema = z.object({
   email: z
     .string()

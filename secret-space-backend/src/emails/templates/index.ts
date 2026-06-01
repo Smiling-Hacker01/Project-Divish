@@ -9,3 +9,6 @@
 
 export { otpEmail } from './otp';
 export type { OtpTemplateData, RenderedEmail } from './otp';
+
+export { inviteEmail } from './invite';
+export type { InviteTemplateData } from './invite';

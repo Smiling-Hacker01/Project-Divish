@@ -11,6 +11,7 @@ import {
     join,
     refresh,
     logout,
+    sendInvite,
 } from '../controllers/auth.controller';
 
 const router = Router();
@@ -49,5 +50,19 @@ router.post('/otp-verify', verifyTempJWT, otpVerify);     // Fallback: verify OT
 // ── Protected — requires full JWT ─────────────────────────────────────────────
 router.post('/enroll-face', enrollFace); // No JWT needed — uses userId+password from body
 router.post('/logout', verifyJWT, logout);
+
+// Per-IP rate limit on /send-invite as a second layer of defence above the
+// per-couple + per-email Redis limits inside the controller. 10 sends per
+// 15min per IP is loose enough that a couple iterating on a typo'd email
+// won't hit it, but tight enough that a misbehaving client can't burn the
+// Brevo daily quota in seconds.
+const inviteLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    message: { error: "You're sending invites too fast. Take a breath and try again." },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+router.post('/send-invite', inviteLimiter, verifyJWT, sendInvite);
 
 export default router;

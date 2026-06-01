@@ -6,6 +6,9 @@ export type AuthStackParamList = {
   OTP: { mode: 'signup' | 'login' };
   FaceEnroll: { email?: string; password?: string };
   CoupleCode: undefined;
+  // partnerName is optional context for the WhatsApp pre-filled message;
+  // when present we address the partner by name in the share text.
+  InvitePartner: { partnerName?: string } | undefined;
   JoinCode: undefined;
   Login: undefined;
   ForgotPassword: undefined;
