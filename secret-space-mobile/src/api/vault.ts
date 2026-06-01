@@ -4,10 +4,36 @@ import { VaultItem, VaultPage } from '@/types/api';
 
 const VAULT_TOKEN_KEY = 'secretspace.vaultToken';
 
+// Memory-first cache for the vault token, same pattern as api/client.ts
+// tokens.* — AsyncStorage 1.x + RN newArchEnabled has a write-then-read
+// race where setItem can resolve its JS-side promise before the native
+// storage flush is visible to a subsequent getItem from the same JS
+// path. The symptom in this file used to be: VaultUnlockScreen calls
+// vaultApi.unlock() (which writes the token), then immediately
+// navigation.replace('VaultGrid'), then VaultGrid's mount calls
+// vaultApi.list() which reads the token — sometimes the token came back
+// null and the request went out without the X-Vault-Token header, the
+// backend rejected with 401, and the screen looked like the unlock
+// didn't take. Same fix as the auth tokens: synchronous in-memory
+// assignment on write so any in-process read sees the latest value,
+// AsyncStorage stays the persistence layer.
+let memVaultToken: string | null = null;
+
 export const vaultApi = {
-  getToken: () => AsyncStorage.getItem(VAULT_TOKEN_KEY),
-  setToken: (t: string) => AsyncStorage.setItem(VAULT_TOKEN_KEY, t),
-  clearToken: () => AsyncStorage.removeItem(VAULT_TOKEN_KEY),
+  getToken: async (): Promise<string | null> => {
+    if (memVaultToken !== null) return memVaultToken;
+    const v = await AsyncStorage.getItem(VAULT_TOKEN_KEY);
+    if (v) memVaultToken = v;
+    return v;
+  },
+  setToken: async (t: string) => {
+    memVaultToken = t;
+    await AsyncStorage.setItem(VAULT_TOKEN_KEY, t);
+  },
+  clearToken: async () => {
+    memVaultToken = null;
+    await AsyncStorage.removeItem(VAULT_TOKEN_KEY);
+  },
 
   unlock: async (password?: string) => {
     const { data } = await apiClient.post<{ success: boolean; token: string }>(
