@@ -63,6 +63,17 @@ export const authApi = {
       .catch(() => ({ data: { success: true } }));
     return data;
   },
+
+  // Send a branded invitation email to the partner. Caller must be the
+  // authenticated creator (User A) of a couple whose User B has not yet
+  // joined; the server enforces both checks and returns context-specific
+  // 4xx errors otherwise (caller's UI should surface the .response.data.error
+  // string verbatim). Rate-limited per-couple (5/24h) and per-recipient-email
+  // (1/24h) on the backend.
+  sendInvite: async (email: string) => {
+    const { data } = await apiClient.post<{ ok: boolean }>('/auth/send-invite', { email });
+    return data;
+  },
 };
 
 export type { AuthResponse, User };
