@@ -58,6 +58,19 @@ export function OTPScreen({ navigation, route }: Props) {
           route.params?.mode === 'signup' && res.user.coupleStatus === 'waiting';
         if (isSignupWaiting) {
           await completeSignup(res.user);
+          // Live in-flow navigation step: completeSignup persists the
+          // onboarding flag (so an app-kill resume lands on CoupleCode
+          // via AuthStack's initialRouteName), but in the live signup
+          // flow the AuthStack is already mounted — initialRouteName is
+          // honored ONLY on first mount per @react-navigation/native-stack,
+          // so the persisted flag alone does nothing right now. Without
+          // an explicit replace() here, the user sat on OTPScreen showing
+          // 6 typed digits and no progress indicator (the bug they hit:
+          // "OTP looked like it failed, force-killed app, then on relaunch
+          // the persisted flag rescued them onto CoupleCode"). replace()
+          // (not navigate) so the back button doesn't return to OTP — the
+          // signup is already committed at this point.
+          navigation.replace('CoupleCode');
         } else {
           await setUser(res.user);
         }
