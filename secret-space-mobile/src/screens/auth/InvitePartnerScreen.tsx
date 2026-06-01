@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { KeyboardAvoidingView, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { KeyboardAvoidingView, Linking, Platform, Pressable, Share, StyleSheet, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -69,10 +69,6 @@ export function InvitePartnerScreen({}: Props) {
 
   const onShareWhatsApp = async () => {
     if (!code) return;
-    // wa.me opens WhatsApp with the text pre-filled in its compose field.
-    // We use encodeURIComponent on the whole text so emoji + newlines survive
-    // the URL. WhatsApp will surface a contact picker; once the inviter
-    // selects their partner, the message is ready to send with one tap.
     // Mirror the email template's instruction: direct the partner to the
     // "Join with a code" button on the splash screen rather than the
     // "Create our space" path. Without this hint they could easily start
@@ -82,15 +78,39 @@ export function InvitePartnerScreen({}: Props) {
       `Hey, I set up a space for us on Secret Space.\n\n` +
       `Use this code to join: ${code}\n\n` +
       `(Download Secret Space, tap "Join with a code" on the first screen, and enter the code above.)`;
-    const waUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
-    const supported = await Linking.canOpenURL(waUrl).catch(() => false);
-    if (!supported) {
-      toast.error("Couldn't open WhatsApp. Make sure it's installed.");
+
+    // Strategy: try the native WhatsApp deep link first (works for BOTH
+    // WhatsApp and WhatsApp Business — they share the same `whatsapp://`
+    // URL scheme, so whichever app is installed handles it). If that fails
+    // for any reason (neither variant installed, Android 11+ package
+    // visibility restrictions, scheme not registered), fall back to the
+    // system share sheet so the user can still pick whatever messaging app
+    // they actually use (Telegram, iMessage, SMS, etc.).
+    //
+    // We deliberately don't preflight with Linking.canOpenURL — on Android
+    // 11+ it requires every queried scheme to be declared in
+    // AndroidManifest.xml's <queries> block, which we don't have for
+    // whatsapp/whatsapp-business, so canOpenURL returns false even when
+    // the app IS installed (the bug the user hit — WhatsApp Business
+    // installed but button did nothing because canOpenURL lied). Skipping
+    // the precheck and attempting openURL inside a try/catch is the more
+    // reliable pattern.
+    const directLink = `whatsapp://send?text=${encodeURIComponent(text)}`;
+    try {
+      await Linking.openURL(directLink);
       return;
+    } catch {
+      // Direct deep link failed — fall through to the universal share sheet.
     }
-    await Linking.openURL(waUrl).catch(() => {
-      toast.error("Couldn't open WhatsApp.");
-    });
+
+    // Universal fallback. Opens the platform share chooser with the message
+    // pre-filled — the user can pick WhatsApp Business, regular WhatsApp,
+    // Telegram, iMessage, SMS, or anything else they have installed.
+    try {
+      await Share.share({ message: text });
+    } catch {
+      toast.error("Couldn't open a share option. Copy the code and share it from your messages app.");
+    }
   };
 
   // After a successful invite send the natural next step is to land on the
@@ -163,7 +183,13 @@ export function InvitePartnerScreen({}: Props) {
               placeholder="them@example.com"
             />
             <Button
-              label={sentTo ? `Sent to ${sentTo}` : 'Send invitation'}
+              // Keep the label short — long emails (matchbestsoftware1032
+              // @gmail.com etc) wrapped the button label onto two lines and
+              // looked broken. The email is still visible in the input
+              // above and the success toast already confirmed which
+              // address received the invitation, so the button doesn't
+              // need to repeat the full address.
+              label={sentTo ? 'Invitation sent' : 'Send invitation'}
               leadingIcon={sentTo ? 'check' : 'mail'}
               fullWidth
               style={{ marginTop: 14 }}
