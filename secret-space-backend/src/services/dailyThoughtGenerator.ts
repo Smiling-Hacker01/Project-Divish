@@ -27,8 +27,12 @@ import { humanize, recordOutcome } from './humanize';
  * the two home-screen cards never read as duplicates.
  */
 
+// Same model + reasoning as in loveReasonGenerator.ts — gemini-2.5-flash is
+// the current stable Flash workhorse after the 1.5 family was sunset.
+// Pinning to the explicit version (not `gemini-flash-latest`) so behavior
+// stays predictable until we choose to bump again.
 const GEMINI_API_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 // 30 hours — comfortably longer than 24 so the old key auto-expires after the
@@ -135,6 +139,10 @@ async function callGemini(apiKey: string, prompt: string): Promise<string | null
           temperature: 0.9,
           topP: 0.95,
           maxOutputTokens: 120,
+          // Same reasoning as loveReasonGenerator — disable the 2.5-family's
+          // default "thinking" pass so maxOutputTokens isn't consumed by
+          // internal reasoning tokens before any visible output is produced.
+          thinkingConfig: { thinkingBudget: 0 },
         },
         safetySettings: [
           { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
