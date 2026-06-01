@@ -12,7 +12,7 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'OTP'>;
 
 export function OTPScreen({ navigation, route }: Props) {
   const theme = useTheme();
-  const { setUser } = useAuth();
+  const { setUser, completeSignup } = useAuth();
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -38,7 +38,23 @@ export function OTPScreen({ navigation, route }: Props) {
       setSubmitting(true);
       setError(null);
       const res = await authApi.otpVerify(code);
-      if (res.user) await setUser(res.user);
+      if (res.user) {
+        // Branch on the route mode + couple state. SIGNUP-mode users whose
+        // couple is still in 'waiting' (no partner joined) need to see the
+        // CoupleCode reveal screen BEFORE landing on Main — calling the
+        // dedicated completeSignup path raises the onboarding flag so
+        // RootNavigator keeps them on the AuthStack until CoupleCode's
+        // dismiss handler clears it. LOGIN-mode users (and the rare signup
+        // who somehow lands here with an active couple) go straight to Main
+        // via the standard setUser.
+        const isSignupWaiting =
+          route.params?.mode === 'signup' && res.user.coupleStatus === 'waiting';
+        if (isSignupWaiting) {
+          await completeSignup(res.user);
+        } else {
+          await setUser(res.user);
+        }
+      }
     } catch (e: any) {
       setError(e?.response?.data?.error ?? 'That code did not match.');
       setCode('');

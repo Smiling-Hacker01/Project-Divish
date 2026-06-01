@@ -7,14 +7,13 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ScreenContainer, InlineHeader, Text, Button, Card } from '@/components';
 import { useTheme } from '@/theme';
 import { useAuth } from '@/context/AuthContext';
-import { settingsApi } from '@/api';
 import { AuthStackParamList } from '@/navigation/types';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'CoupleCode'>;
 
 export function CoupleCodeScreen({ navigation }: Props) {
   const theme = useTheme();
-  const { user, refreshProfile } = useAuth();
+  const { user, refreshProfile, completeCoupleCodeReveal } = useAuth();
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -119,11 +118,11 @@ export function CoupleCodeScreen({ navigation }: Props) {
             onPress={onShare}
           />
           <Button
-            label="Continue without partner"
+            label="I'll do this later"
             variant="ghost"
             style={{ marginTop: 12 }}
             fullWidth
-            onPress={() => settingsApi.getProfile().then(({ user: u }) => u && refreshProfile())}
+            onPress={completeCoupleCodeReveal}
           />
         </View>
       </ScrollView>
