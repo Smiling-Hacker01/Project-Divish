@@ -7,7 +7,10 @@ import { Text } from './Text';
 interface Segment<T extends string> {
   key: T;
   label: string;
-  badge?: boolean;
+  // `true` → small unmarked dot (legacy behaviour, kept for back-compat).
+  // `number` → numeric pill with the count, capped visually at 99+. Use this
+  // when the count is informative (e.g. "To Fulfill 3").
+  badge?: boolean | number;
 }
 
 interface Props<T extends string> {
@@ -27,6 +30,11 @@ export function SegmentedControl<T extends string>({ segments, value, onChange }
     >
       {segments.map((s) => {
         const active = s.key === value;
+        // Numeric badges are only rendered when > 0 — a zero count is a "no
+        // attention needed" signal and should look identical to no badge.
+        const numericBadge =
+          typeof s.badge === 'number' && s.badge > 0 ? s.badge : null;
+        const showDot = s.badge === true;
         return (
           <Pressable key={s.key} onPress={() => onChange(s.key)} style={styles.seg}>
             {active ? (
@@ -37,14 +45,38 @@ export function SegmentedControl<T extends string>({ segments, value, onChange }
                 style={[StyleSheet.absoluteFill, { borderRadius: 999 }]}
               />
             ) : null}
-            <Text
-              variant="bodySmall"
-              weight={active ? 'semibold' : 'medium'}
-              style={{ color: active ? '#fff' : theme.colors.foregroundDim }}
-            >
-              {s.label}
-            </Text>
-            {s.badge && (
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text
+                variant="bodySmall"
+                weight={active ? 'semibold' : 'medium'}
+                style={{ color: active ? '#fff' : theme.colors.foregroundDim }}
+              >
+                {s.label}
+              </Text>
+              {numericBadge !== null && (
+                <View
+                  style={[
+                    styles.countPill,
+                    {
+                      backgroundColor: active ? 'rgba(255,255,255,0.28)' : theme.colors.primary,
+                    },
+                  ]}
+                >
+                  <Text
+                    variant="caption"
+                    style={{
+                      color: '#fff',
+                      fontSize: 10,
+                      fontWeight: '700',
+                      lineHeight: 12,
+                    }}
+                  >
+                    {numericBadge > 99 ? '99+' : numericBadge}
+                  </Text>
+                </View>
+              )}
+            </View>
+            {showDot && (
               <View
                 style={[
                   styles.badge,
@@ -82,5 +114,14 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
+  },
+  countPill: {
+    marginLeft: 6,
+    minWidth: 18,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
