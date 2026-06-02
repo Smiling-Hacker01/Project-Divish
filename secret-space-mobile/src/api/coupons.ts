@@ -13,6 +13,18 @@ export const couponsApi = {
   create: async (body: { title: string; description: string; expiresAt?: string }) =>
     (await apiClient.post<Coupon>('/coupons', body)).data,
 
+  // PATCH /coupons/:id — edit Active coupon. Backend enforces creator-only +
+  // active-only; pass only the fields you want to change.
+  update: async (
+    id: string,
+    body: { title?: string; description?: string; expiresAt?: string | null }
+  ) => (await apiClient.patch<Coupon>(`/coupons/${id}`, body)).data,
+
+  // DELETE /coupons/:id — creator-only; backend rejects unless status is
+  // Active or Expired (post-redemption coupons are shared history).
+  remove: async (id: string) =>
+    (await apiClient.delete<{ success: true }>(`/coupons/${id}`)).data,
+
   // PATCH /coupons/:id/status — body must be lowercase status string.
   // Lifecycle: recipient sets 'pending' (redeem) → creator sets 'used' (approve) → creator hits /fulfill
   setStatus: async (id: string, status: CouponStatus | StatusLowercase) => {

@@ -18,6 +18,10 @@ interface Props {
   onBack?: () => void;
   rightActions?: Action[];
   leadingElement?: React.ReactNode;
+  // Symmetric counterpart to `leadingElement` for when the right side needs
+  // something richer than an icon Action (e.g. a labeled primary button in a
+  // modal create / edit screen). When supplied, `rightActions` is ignored.
+  trailingElement?: React.ReactNode;
   centerElement?: React.ReactNode;
   style?: ViewStyle;
   // Default true: solid background + bottom hairline + status-bar inset, so scrolled
@@ -39,6 +43,7 @@ export function TopBar({
   onBack,
   rightActions = [],
   leadingElement,
+  trailingElement,
   centerElement,
   style,
   opaque = true,
@@ -116,7 +121,7 @@ export function TopBar({
         </View>
 
         <View style={[styles.side, { justifyContent: 'flex-end' }]}>
-          {rightActions.map((a, i) => {
+          {trailingElement ?? rightActions.map((a, i) => {
             const numericBadge = typeof a.badge === 'number' ? a.badge : null;
             const showDot = a.badge === true;
             return (

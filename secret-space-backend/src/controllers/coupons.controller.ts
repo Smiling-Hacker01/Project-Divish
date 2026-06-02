@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
-import { createCouponSchema, updateCouponStatusSchema, couponReviewSchema } from '../utils/validators';
+import { createCouponSchema, updateCouponSchema, updateCouponStatusSchema, couponReviewSchema } from '../utils/validators';
 import { sendPush } from '../services/notification.service';
 import { io } from '../websockets/chat.gateway';
 import { couponCreated, couponRedeemed, couponApproved, couponFulfilled } from '../copy/notifications';
@@ -30,7 +30,9 @@ type CouponChange =
   | { action: 'created'; couponId: string }
   | { action: 'status'; couponId: string; status: string }
   | { action: 'fulfilled'; couponId: string }
-  | { action: 'reviewed'; couponId: string };
+  | { action: 'reviewed'; couponId: string }
+  | { action: 'updated'; couponId: string }
+  | { action: 'deleted'; couponId: string };
 
 const broadcastCouponChange = (coupleId: string, change: CouponChange): void => {
   try {
@@ -422,6 +424,138 @@ export const addReview = async (req: Request, res: Response, next: NextFunction)
     }
 
     broadcastCouponChange(coupleId, { action: 'reviewed', couponId: id });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ── PATCH /api/coupons/:id ─────────────────────────────────────────────────────
+// Edit an Active coupon's title / description / expiry. Allowed only while the
+// coupon is still Active (i.e. not yet redeemed) — once the recipient has acted
+// on it the terms are locked, otherwise the creator could rewrite the offer
+// after the partner committed to redeeming the old one.
+export const updateCoupon = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const parsed = updateCouponSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0].message });
+      return;
+    }
+    const { title, description, expiresAt } = parsed.data;
+    const userId = req.user!.userId;
+    const coupleId = req.coupleId!;
+    const { id } = req.params;
+
+    const coupon = await prisma.coupon.findFirst({ where: { id, coupleId } });
+    if (!coupon) {
+      res.status(404).json({ error: 'Coupon not found' });
+      return;
+    }
+
+    if (coupon.creatorId !== userId) {
+      res.status(403).json({ error: 'Only the creator can edit this coupon' });
+      return;
+    }
+
+    if (coupon.status !== 'active') {
+      res.status(400).json({ error: 'Only active coupons can be edited' });
+      return;
+    }
+
+    const updateData: { title?: string; description?: string; expiresAt?: Date | null } = {};
+    if (title !== undefined) updateData.title = title;
+    if (description !== undefined) updateData.description = description;
+    if (expiresAt !== undefined) {
+      updateData.expiresAt = expiresAt === null ? null : new Date(expiresAt);
+    }
+
+    // Conditional update — only writes if the coupon is STILL active. Guards
+    // against a race where the recipient redeems between our read above and
+    // the write below (would otherwise let an edit slip in after redemption).
+    const result = await prisma.coupon.updateMany({
+      where: { id, coupleId, status: 'active' },
+      data: updateData,
+    });
+
+    if (result.count === 0) {
+      const fresh = await prisma.coupon.findUnique({ where: { id } });
+      res.status(409).json({
+        error: 'Coupon was just redeemed and can no longer be edited.',
+        currentStatus: fresh?.status ?? null,
+      });
+      return;
+    }
+
+    broadcastCouponChange(coupleId, { action: 'updated', couponId: id });
+
+    const updated = await prisma.coupon.findUnique({ where: { id } });
+    if (!updated) {
+      res.status(404).json({ error: 'Coupon not found' });
+      return;
+    }
+
+    res.json({
+      id: updated.id,
+      title: updated.title,
+      description: updated.description || '',
+      status: capitalize(updated.status),
+      expiry: updated.expiresAt?.toISOString(),
+      creator: updated.creatorId === userId ? 'you' : 'partner',
+      recipient: updated.recipientId === userId ? 'you' : 'partner',
+      createdAt: updated.createdAt.toISOString(),
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ── DELETE /api/coupons/:id ────────────────────────────────────────────────────
+// Remove a coupon entirely. Restricted to the creator AND to the Active or
+// Expired states — once a coupon has been redeemed, approved, fulfilled, or
+// reviewed it carries shared history that the partner relies on, so deletion
+// would erase a record the other person remembers.
+export const deleteCoupon = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const userId = req.user!.userId;
+    const coupleId = req.coupleId!;
+    const { id } = req.params;
+
+    const coupon = await prisma.coupon.findFirst({ where: { id, coupleId } });
+    if (!coupon) {
+      res.status(404).json({ error: 'Coupon not found' });
+      return;
+    }
+
+    if (coupon.creatorId !== userId) {
+      res.status(403).json({ error: 'Only the creator can delete this coupon' });
+      return;
+    }
+
+    if (coupon.status !== 'active' && coupon.status !== 'expired') {
+      res.status(400).json({
+        error: 'This coupon has been redeemed and can no longer be deleted.',
+      });
+      return;
+    }
+
+    // Conditional delete — same race-guard pattern as updateCoupon.
+    const result = await prisma.coupon.deleteMany({
+      where: {
+        id,
+        coupleId,
+        creatorId: userId,
+        status: { in: ['active', 'expired'] },
+      },
+    });
+
+    if (result.count === 0) {
+      res.status(409).json({ error: 'Coupon state changed before deletion could complete.' });
+      return;
+    }
+
+    broadcastCouponChange(coupleId, { action: 'deleted', couponId: id });
+
     res.json({ success: true });
   } catch (err) {
     next(err);

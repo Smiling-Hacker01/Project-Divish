@@ -55,7 +55,11 @@ export function CouponsListScreen() {
     return coupons.filter((c) => c.status === 'Pending' && c.creator === 'you');
   }, [coupons, tab]);
 
-  const hasPendingFulfill = coupons.some((c) => c.status === 'Pending' && c.creator === 'you');
+  // Count, not boolean — a numeric pill ("To Fulfill 3") gives more signal
+  // than a binary dot. Mirrors the chat unread-count pattern in TopBar.
+  const pendingFulfillCount = coupons.filter(
+    (c) => c.status === 'Pending' && c.creator === 'you'
+  ).length;
 
   return (
     <ScreenContainer scroll={false}>
@@ -76,7 +80,7 @@ export function CouponsListScreen() {
           segments={[
             { key: 'received', label: 'Received' },
             { key: 'given', label: 'Given' },
-            { key: 'fulfill', label: 'To Fulfill', badge: hasPendingFulfill },
+            { key: 'fulfill', label: 'To Fulfill', badge: pendingFulfillCount },
           ]}
           value={tab}
           onChange={setTab}
@@ -164,18 +168,26 @@ export function CouponCard({ coupon, onPress }: { coupon: Coupon; onPress: () =>
         <View style={{ paddingHorizontal: 20, paddingTop: 18 }}>
           <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
             <View style={{ flex: 1, paddingRight: 12 }}>
-              <Text variant="h3" style={{ fontSize: 22 }} numberOfLines={1}>
+              {/* Title now wraps to up to 2 lines — the old single-line cap
+                  ellipsized longer titles like "A whole evening, phones off"
+                  mid-word. Font drops 22→20 so a 2-line title still fits the
+                  card height comfortably; lineHeight tightens to 26 for a
+                  hand-set feel rather than the loose 30 of the h3 default. */}
+              <Text
+                variant="h3"
+                style={{ fontSize: 20, lineHeight: 26 }}
+                numberOfLines={2}
+              >
                 {coupon.title}
               </Text>
               <Text variant="bodySmall" color="muted" style={{ marginTop: 6 }} numberOfLines={2}>
                 {coupon.description}
               </Text>
             </View>
-            {/* Chip sits at the top-right of the card. flexShrink: 0 keeps the
-                pill from being squeezed by a long title; alignItems on the parent
-                pins it to the top edge rather than vertically centering against
-                the multi-line description. */}
-            <View style={{ flexShrink: 0 }}>
+            {/* Status chip stays top-right. alignSelf pins it to the first
+                line of the title so a 2-line title doesn't push it down — the
+                chip anchors visually to the top edge of the card content. */}
+            <View style={{ flexShrink: 0, alignSelf: 'flex-start' }}>
               <Chip label={coupon.status} tone={statusToTone[coupon.status]} size="sm" />
             </View>
           </View>

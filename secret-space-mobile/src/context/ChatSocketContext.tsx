@@ -36,7 +36,9 @@ export type CouponChangeEvent =
   | { action: 'created'; couponId: string }
   | { action: 'status'; couponId: string; status: string }
   | { action: 'fulfilled'; couponId: string }
-  | { action: 'reviewed'; couponId: string };
+  | { action: 'reviewed'; couponId: string }
+  | { action: 'updated'; couponId: string }
+  | { action: 'deleted'; couponId: string };
 
 type CouponListener = (e: CouponChangeEvent) => void;
 
