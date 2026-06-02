@@ -36,7 +36,9 @@ export type RootStackParamList = {
   DiaryCreate: { resumeId?: string } | undefined;
   DiaryDetail: { id: string };
   Chat: undefined;
-  CouponCreate: undefined;
+  // couponId present → edit mode (screen pre-loads that coupon and PATCHes
+  // instead of POSTing on submit). Absent / undefined → fresh-create flow.
+  CouponCreate: { couponId?: string } | undefined;
   CouponDetail: { id: string };
   AddReason: undefined;
   Settings: undefined;
