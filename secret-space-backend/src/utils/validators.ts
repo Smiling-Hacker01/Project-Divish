@@ -122,6 +122,20 @@ export const createCouponSchema = z.object({
   expiresAt: z.string().optional(),
 });
 
+// PATCH /:id — every field optional but at least one must be present. The
+// controller enforces "active only" + "creator only" gates; this schema only
+// validates shape.
+export const updateCouponSchema = z
+  .object({
+    title: z.string().min(1, 'Title is required').max(100).optional(),
+    description: z.string().max(500).optional(),
+    expiresAt: z.string().nullable().optional(),
+  })
+  .refine(
+    (d) => d.title !== undefined || d.description !== undefined || d.expiresAt !== undefined,
+    { message: 'At least one field must be provided' }
+  );
+
 export const updateCouponStatusSchema = z.object({
   status: z.enum(['active', 'pending', 'used', 'fulfilled', 'expired']),
 });
