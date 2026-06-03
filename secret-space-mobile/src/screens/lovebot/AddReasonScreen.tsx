@@ -72,17 +72,21 @@ export function AddReasonScreen() {
       <TopBar
         showBack={false}
         leadingElement={
-          <Pressable onPress={() => navigation.goBack()}>
+          <Pressable onPress={() => navigation.goBack()} hitSlop={8}>
             <Text variant="bodyMedium" color="primary">
               Cancel
             </Text>
           </Pressable>
         }
         title="Why you love them"
+        // Save lives in the bar's trailingElement slot, mirroring DiaryCreate
+        // and CouponCreate. This replaces the old `marginTop: -44` overlay hack
+        // which was tuned to the previous 56px bar height and broke (button sat
+        // ~8px too low) when the bar tightened to 48px.
+        trailingElement={
+          <Button label="Save" size="sm" onPress={submit} disabled={!text.trim()} loading={submitting} />
+        }
       />
-      <View style={{ alignSelf: 'flex-end', marginTop: -44, marginRight: theme.screenPadding, marginBottom: 8 }}>
-        <Button label="Save" size="sm" onPress={submit} disabled={!text.trim()} loading={submitting} />
-      </View>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={{ flex: 1, paddingHorizontal: theme.screenPadding, paddingTop: 8 }}>

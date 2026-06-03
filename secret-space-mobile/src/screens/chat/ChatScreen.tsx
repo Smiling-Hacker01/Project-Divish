@@ -76,6 +76,15 @@ export function ChatScreen() {
   // Anything in `decryptedCache` is what gets rendered in the bubble; entries without
   // a value show "Decrypting…" instead. This mirrors the web client.
   const [decryptedCache, setDecryptedCache] = useState<Record<string, string>>({});
+  // Live mirror of decryptedCache for the decryption pump to read without
+  // taking decryptedCache as an effect dependency. If the pump depended on
+  // decryptedCache directly, every batch it committed would re-trigger the
+  // whole effect — overlapping runs. Reading the latest values through a ref
+  // (synced just below) lets the pump drop that dependency entirely.
+  const decryptedCacheRef = useRef(decryptedCache);
+  useEffect(() => {
+    decryptedCacheRef.current = decryptedCache;
+  }, [decryptedCache]);
   const [myKeys, setMyKeys] = useState<{ publicKey: string; privateKey: string } | null>(null);
   // Timestamp at which the currently-active keypair was first held on this
   // device. Loaded once at mount. Messages older than this can't be
@@ -251,29 +260,51 @@ export function ChatScreen() {
     let cancelled = false;
 
     (async () => {
+      // Read the current cache through the ref (not the state in deps) so this
+      // effect doesn't re-run every time we commit a batch below.
+      const cache = decryptedCacheRef.current;
       const toDecrypt = messages.filter(
         (m) =>
           !m.deletedForEveryone &&
           m.content !== null &&
-          decryptedCache[m.id] === undefined &&
+          cache[m.id] === undefined &&
           !m.id.startsWith('temp-') // optimistic bubbles already have plaintext cached
       );
       if (toDecrypt.length === 0) return;
 
-      const updates: Record<string, string> = {};
-      for (const msg of toDecrypt) {
+      // Decrypt newest-first (the messages at the bottom of the list the user
+      // is actually looking at) and commit in small batches with a yield
+      // between them. decryptAESKeyWithRSA uses pure-JS node-forge RSA, which
+      // is synchronous and CPU-heavy: decrypting a large backlog in one tight
+      // loop monopolizes the single JS thread for tens of seconds, which froze
+      // navigation and touch when leaving the chat ("stuck, then recovers").
+      // Yielding (setTimeout 0) between batches lets the navigator, gesture
+      // handler, and renderer interleave, so the UI stays responsive while
+      // bubbles fill in progressively instead of all-at-once-after-a-freeze.
+      const ordered = [...toDecrypt].reverse();
+      const BATCH_SIZE = 6;
+      let batch: Record<string, string> = {};
+      let sinceYield = 0;
+
+      const commit = (updates: Record<string, string>) => {
+        if (cancelled || Object.keys(updates).length === 0) return;
+        setDecryptedCache((prev) => ({ ...prev, ...updates }));
+      };
+
+      for (const msg of ordered) {
+        if (cancelled) return;
         try {
           const isMine = msg.senderId === user.id;
           const wrappedKey = isMine ? msg.senderAesKey : msg.recipientAesKey;
           if (!wrappedKey) {
             // No wrapped key for our side — treat content as plaintext (web's fallback
             // for messages sent before the keypair was registered).
-            updates[msg.id] = msg.content ?? '';
-            continue;
+            batch[msg.id] = msg.content ?? '';
+          } else {
+            const aesKey = await decryptAESKeyWithRSA(wrappedKey, myKeys.privateKey);
+            const plain = await decryptTextAES(msg.content!, aesKey);
+            batch[msg.id] = plain;
           }
-          const aesKey = await decryptAESKeyWithRSA(wrappedKey, myKeys.privateKey);
-          const plain = await decryptTextAES(msg.content!, aesKey);
-          updates[msg.id] = plain;
         } catch (err) {
           // Classify: was this message authored BEFORE the device's current
           // keypair was created? If so, the failure is expected — the AES key
@@ -297,18 +328,26 @@ export function ChatScreen() {
           } else if (__DEV__) {
             console.log('[Chat] Legacy message (pre-keypair) failed to decrypt:', msg.id);
           }
-          updates[msg.id] = '__LOCKED__';
+          batch[msg.id] = '__LOCKED__';
+        }
+
+        if (++sinceYield >= BATCH_SIZE) {
+          commit(batch);
+          batch = {};
+          sinceYield = 0;
+          // Hand the JS thread back to the event loop before the next batch.
+          await new Promise((resolve) => setTimeout(resolve, 0));
         }
       }
-      if (!cancelled && Object.keys(updates).length > 0) {
-        setDecryptedCache((prev) => ({ ...prev, ...updates }));
-      }
+
+      // Flush any trailing partial batch.
+      commit(batch);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [messages, myKeys, user?.id, decryptedCache, keypairCreatedAt]);
+  }, [messages, myKeys, user?.id, keypairCreatedAt]);
 
   // ── Socket event wiring ──────────────────────────────────────────────────────
   useEffect(() => {

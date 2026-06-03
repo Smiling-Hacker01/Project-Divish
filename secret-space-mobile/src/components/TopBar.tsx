@@ -1,6 +1,7 @@
 import React from 'react';
 import { Pressable, StyleSheet, View, ViewStyle } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '@/theme';
 import { Text } from './Text';
@@ -10,6 +11,11 @@ interface Action {
   onPress?: () => void;
   // `true` shows a dot (unspecified count); a number shows that count, capped at 99+.
   badge?: boolean | number;
+  // `icon` (default) → glass chip matching the bar variant.
+  // `cta` → 40×40 gradient circle for the primary creation action on landing
+  // screens (e.g. the + on Diary / Coupons). Visually distinct from secondary
+  // actions so the user's eye lands on the create affordance first.
+  kind?: 'icon' | 'cta';
 }
 
 interface Props {
@@ -66,14 +72,17 @@ export function TopBar({
   const bgColor = isFloating || !opaque ? 'transparent' : theme.colors.background;
   const showHairline = !isFloating && opaque;
 
-  // Icon button dimensions: 36×36 floating, 40×40 solid. The smaller chip on floating
-  // bars reads lighter against the gradient backdrop without losing tap-target size
-  // (still >=44pt with hitSlop).
-  const iconBtnSize = isFloating ? 36 : 40;
+  // Icon button dimensions: unified at 36×36 across both variants for a
+  // consistent feel between the floating detail-page bar and the solid
+  // modal/chat bar. The earlier 40×40 solid was visually heavier than the
+  // 36×36 floating, which made detail screens like CouponDetail feel
+  // stretched. Tap target stays comfortably above 44pt with hitSlop={8}.
+  const iconBtnSize = 36;
   const iconBtnRadius = iconBtnSize / 2;
-  // On floating we drop the border outline — the glass fill alone gives enough
-  // separation against the gradient. On solid we keep the border for crispness.
-  const iconBorderWidth = isFloating ? 0 : 1;
+  // Border outline dropped on both variants — the glass fill alone gives
+  // enough separation against any backdrop, and removing it visually unifies
+  // icon chips with InlineHeader (which never had a border).
+  const iconBorderWidth = 0;
 
   return (
     // No SafeAreaView wrap — ScreenContainer now applies the top inset
@@ -114,7 +123,12 @@ export function TopBar({
         <View style={styles.center}>
           {centerElement ??
             (title ? (
-              <Text variant="h3" style={{ fontSize: 18 }} numberOfLines={1}>
+              // Title sizing tightened 18→16pt — at the previous 18pt the
+              // single-word titles ("Coupon", "New entry") felt oversized for
+              // the page chrome and pulled the eye off the page content. 16pt
+              // matches the bodyMedium scale and reads as utilitarian
+              // navigation rather than dominant page metadata.
+              <Text variant="bodyMedium" weight="semibold" numberOfLines={1}>
                 {title}
               </Text>
             ) : null)}
@@ -124,6 +138,14 @@ export function TopBar({
           {trailingElement ?? rightActions.map((a, i) => {
             const numericBadge = typeof a.badge === 'number' ? a.badge : null;
             const showDot = a.badge === true;
+            const isCta = a.kind === 'cta';
+            // The CTA variant renders the rose→gold gradient circle that
+            // landing screens use for their primary creation action (the +
+            // button on Diary / Coupons). Sized 40×40 so it reads as
+            // deliberately heavier than the 36×36 secondary icon chips —
+            // primary > secondary visual hierarchy.
+            const btnSize = isCta ? 40 : iconBtnSize;
+            const btnRadius = btnSize / 2;
             return (
               <Pressable
                 key={i}
@@ -131,19 +153,32 @@ export function TopBar({
                 style={({ pressed }) => [
                   styles.iconBtn,
                   {
-                    width: iconBtnSize,
-                    height: iconBtnSize,
-                    borderRadius: iconBtnRadius,
-                    borderWidth: iconBorderWidth,
-                    backgroundColor: theme.colors.glass,
+                    width: btnSize,
+                    height: btnSize,
+                    borderRadius: btnRadius,
+                    borderWidth: isCta ? 0 : iconBorderWidth,
+                    backgroundColor: isCta ? 'transparent' : theme.colors.glass,
                     borderColor: theme.colors.hairlineStrong,
                     marginLeft: i ? 8 : 0,
                     opacity: pressed ? 0.7 : 1,
+                    overflow: 'hidden',
                   },
                 ]}
                 hitSlop={8}
               >
-                <Feather name={a.icon} size={isFloating ? 18 : 20} color={theme.colors.foreground} />
+                {isCta && (
+                  <LinearGradient
+                    colors={theme.gradientStops as unknown as readonly [string, string]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={[StyleSheet.absoluteFill, { borderRadius: btnRadius }]}
+                  />
+                )}
+                <Feather
+                  name={a.icon}
+                  size={isFloating || isCta ? 18 : 20}
+                  color={isCta ? '#fff' : theme.colors.foreground}
+                />
                 {showDot && (
                   <View
                     style={[
@@ -183,7 +218,10 @@ export function TopBar({
 }
 
 const styles = StyleSheet.create({
-  bar: { height: 56, flexDirection: 'row', alignItems: 'center' },
+  // Bar height tightened 56 → 48. Combined with the 36px icon chips this
+  // gives ~6px of clearance above/below the chips inside a comfortably-tall
+  // bar — premium-feeling without consuming as much viewport as before.
+  bar: { height: 48, flexDirection: 'row', alignItems: 'center' },
   // Sides size to their content; center takes the remaining space. Previously we had
   // `flex: 1` on each side and `flex: 2` on center (1:2:1) which mathematically gives
   // each side a fixed 25% of the bar — too tight when the right side has two action

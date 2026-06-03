@@ -125,7 +125,7 @@ export function DiaryDetailScreen({ route, navigation }: Props) {
   if (!entry) {
     return (
       <ScreenContainer>
-        <TopBar title="" />
+        <TopBar title="" variant="floating" />
       </ScreenContainer>
     );
   }
@@ -151,8 +151,11 @@ export function DiaryDetailScreen({ route, navigation }: Props) {
 
   return (
     <ScreenContainer scroll={false}>
+      {/* Floating: transparent + no hairline, lets the hero image/video below
+          read edge-to-edge without a chrome bar carving a strip across it. */}
       <TopBar
         title=""
+        variant="floating"
         rightActions={isOwner && !isDeleted ? [{ icon: 'trash-2', onPress: confirmDelete }] : []}
       />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>

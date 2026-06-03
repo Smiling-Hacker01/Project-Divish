@@ -2,9 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, View, FlatList } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { ScreenContainer, Text, Card, Avatar, EmptyState, SegmentedControl } from '@/components';
+import { ScreenContainer, InlineHeader, Text, Card, Avatar, EmptyState, SegmentedControl } from '@/components';
 import { useTheme } from '@/theme';
 import { diaryApi } from '@/api';
 import { DiaryEntry } from '@/types/api';
@@ -117,19 +116,18 @@ export function DiaryFeedScreen() {
 
   return (
     <ScreenContainer scroll={false}>
-      <View style={[styles.header, { paddingHorizontal: theme.screenPadding, paddingTop: 16 }]}>
-        <Text variant="h1">Our Diary</Text>
-        <Pressable onPress={() => navigation.navigate('DiaryCreate')} hitSlop={8}>
-          <LinearGradient
-            colors={theme.gradientStops as unknown as readonly [string, string]}
-            style={[styles.addBtn, theme.shadows.glowSoft]}
-          >
-            <Feather name="plus" size={20} color="#fff" />
-          </LinearGradient>
-        </Pressable>
-      </View>
+      {/* Standardized landing-screen header. Previously a bespoke <View> row
+          with h1 + custom gradient circle (40×40); migrated to InlineHeader
+          with `kind: 'cta'` so Diary, Coupons, LoveBot, Vault, Home all share
+          one component, one rhythm, and one consistent height. */}
+      <InlineHeader
+        title="Our Diary"
+        rightActions={[
+          { icon: 'plus', kind: 'cta', onPress: () => navigation.navigate('DiaryCreate') },
+        ]}
+      />
 
-      <View style={{ paddingHorizontal: theme.screenPadding, marginTop: 12 }}>
+      <View style={{ paddingHorizontal: theme.screenPadding, marginTop: 8 }}>
         <SegmentedControl
           segments={[
             { key: 'all', label: 'All' },
@@ -354,13 +352,6 @@ function timeAgo(iso: string): string {
 }
 
 const styles = StyleSheet.create({
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: 8,
-  },
-  addBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   row: { flexDirection: 'row', alignItems: 'center' },
   image: { width: '100%', aspectRatio: 1.4, maxHeight: 320 },
   videoOverlay: {
