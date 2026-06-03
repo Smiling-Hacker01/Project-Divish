@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, TextInput, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { InteractionManager, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { useTheme } from '@/theme';
 import { Text } from './Text';
 
@@ -28,9 +28,44 @@ export function OTPInput({
   const inputRef = useRef<TextInput>(null);
   const [focused, setFocused] = useState(false);
 
+  // Auto-focus AFTER the navigation transition finishes. The old code focused
+  // on a blind 200ms timer, but under the new architecture (newArchEnabled)
+  // the native-stack push animation often isn't done at 200ms — the focus
+  // request lands on a still-transitioning view and the native keyboard never
+  // comes up (the bug: tiles showed but the keyboard stayed hidden until the
+  // user backgrounded + reopened the app, which re-issued focus to the now-
+  // settled view). InteractionManager.runAfterInteractions waits for the
+  // transition/animations to actually complete; the small trailing timeout
+  // covers Android devices where the native view attaches a frame or two after
+  // interactions report done.
   useEffect(() => {
-    if (autoFocus) setTimeout(() => inputRef.current?.focus(), 200);
+    if (!autoFocus) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const task = InteractionManager.runAfterInteractions(() => {
+      timer = setTimeout(() => inputRef.current?.focus(), 50);
+    });
+    return () => {
+      task.cancel();
+      if (timer) clearTimeout(timer);
+    };
   }, [autoFocus]);
+
+  // Tapping the tiles must reliably summon the keyboard. A bare focus() is a
+  // no-op when React Native already believes the field is focused (its onFocus
+  // fired during the transition) even though the keyboard isn't actually
+  // showing — the exact stuck state above. So when we think we're focused, we
+  // blur first and refocus on the next frame to force the keyboard up; only
+  // when genuinely unfocused do we call focus() directly.
+  const handlePress = useCallback(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    if (focused) {
+      input.blur();
+      requestAnimationFrame(() => inputRef.current?.focus());
+    } else {
+      input.focus();
+    }
+  }, [focused]);
 
   const chars = value.padEnd(length, ' ').slice(0, length).split('');
 
@@ -41,7 +76,7 @@ export function OTPInput({
   };
 
   return (
-    <Pressable onPress={() => inputRef.current?.focus()} style={styles.row}>
+    <Pressable onPress={handlePress} style={styles.row}>
       {chars.map((c, i) => {
         const isActive = focused && i === value.length;
         const filled = c.trim().length > 0;
