@@ -994,10 +994,12 @@ export function VaultGridScreen() {
       {/* Bulk-batch progress card — pinned just below the status bar +
           InlineHeader while a batch download is in flight. The top offset
           is composed from useSafeAreaInsets().top (status-bar / notch on
-          iPhone, dynamic island, Android status bar) + 64dp which clears
+          iPhone, dynamic island, Android status bar) + 48dp which clears
           the InlineHeader's content row, so the card lands at a
           consistent visual position on every device regardless of how
-          tall the notch / hole-punch / status bar is.
+          tall the notch / hole-punch / status bar is. (48dp matches the
+          tightened InlineHeader total height — minHeight 40 + 4/4 padding;
+          it was 64dp when the header was 12/8-padded.)
           A Cancel button lets the user stop the loop mid-way; the loop
           drains the current item then exits. */}
       {bulkProgress && (
@@ -1007,7 +1009,7 @@ export function VaultGridScreen() {
             {
               backgroundColor: theme.colors.surface,
               borderColor: theme.colors.hairline,
-              top: insets.top + 64,
+              top: insets.top + 48,
             },
           ]}
         >

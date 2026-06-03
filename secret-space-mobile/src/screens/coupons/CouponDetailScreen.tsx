@@ -107,7 +107,7 @@ export function CouponDetailScreen({ route, navigation }: Props) {
   if (!coupon)
     return (
       <ScreenContainer>
-        <TopBar title="" />
+        <TopBar title="" variant="floating" />
       </ScreenContainer>
     );
 
@@ -193,15 +193,23 @@ export function CouponDetailScreen({ route, navigation }: Props) {
 
   return (
     <ScreenContainer scroll>
+      {/* Floating variant: transparent background, no bottom hairline. The
+          hero card immediately below owns the visual page identity, so a
+          chrome title ("Coupon") would just compete with it. Back + ⋮ at
+          the corners is sufficient navigation — the page IS the coupon. */}
       <TopBar
-        title="Coupon"
+        variant="floating"
         rightActions={
           hasAnyAction
             ? [{ icon: 'more-horizontal', onPress: () => setActionsOpen(true) }]
             : []
         }
       />
-      <View style={{ paddingHorizontal: theme.screenPadding, paddingTop: 16, paddingBottom: 32 }}>
+      {/* paddingTop separates the hero card from the floating back / overflow
+          controls above it — at 8dp the card crowded the chrome; 20dp gives a
+          clear gap so the controls and the card don't visually compete, using
+          some of the empty space lower on the screen. Header stays compact. */}
+      <View style={{ paddingHorizontal: theme.screenPadding, paddingTop: 20, paddingBottom: 32 }}>
         {/* Dedicated hero — replaces the reused CouponCard. Title can wrap to
             as many lines as the content needs, description is full-bleed (no
             numberOfLines cap), and the status overline sits cleanly above so
