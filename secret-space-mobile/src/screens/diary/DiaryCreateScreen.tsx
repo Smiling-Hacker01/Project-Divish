@@ -359,17 +359,19 @@ export function DiaryCreateScreen() {
       <TopBar
         showBack={false}
         leadingElement={
-          <Pressable onPress={() => navigation.goBack()}>
+          <Pressable onPress={() => navigation.goBack()} hitSlop={8}>
             <Text variant="bodyMedium" color="primary">
               Cancel
             </Text>
           </Pressable>
         }
         title="New entry"
-        rightActions={[]}
-      />
-      <View style={{ flex: 1, paddingHorizontal: theme.screenPadding }}>
-        <View style={{ alignSelf: 'flex-end', marginTop: -44, marginBottom: 8 }}>
+        // Post button now lives semantically in the top bar (mirroring
+        // CouponCreate). The previous implementation used a separate Button
+        // with `marginTop: -44` to lift it onto the bar — fragile against any
+        // bar-height change and visually disconnected. trailingElement keeps
+        // Cancel / title / Post anchored together as one row.
+        trailingElement={
           <Button
             label={submitting ? 'Posting…' : 'Post'}
             size="sm"
@@ -377,7 +379,14 @@ export function DiaryCreateScreen() {
             disabled={!valid || submitting}
             loading={submitting}
           />
-        </View>
+        }
+      />
+      {/* paddingTop gives the content-type selector (and the optional draft
+          banner) breathing room below the compact top bar — without it the
+          segmented control sat flush against the header and read as cramped on
+          Android. 12dp is a small, deliberate gap, not a height increase to the
+          header itself. */}
+      <View style={{ flex: 1, paddingHorizontal: theme.screenPadding, paddingTop: 12 }}>
 
         {resumeFromQueue && (
           <View

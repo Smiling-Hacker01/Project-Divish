@@ -1,6 +1,7 @@
 import React from 'react';
 import { Pressable, StyleSheet, View, ViewStyle } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '@/theme';
 import { Text } from './Text';
@@ -10,6 +11,11 @@ interface Action {
   onPress?: () => void;
   // `true` shows a dot (unspecified count); a number shows that count, capped at 99+.
   badge?: boolean | number;
+  // `icon` (default) → glass chip.
+  // `cta` → 40×40 gradient circle for the primary creation action on landing
+  // screens (e.g. the + on Diary / Coupons). Mirrors the same prop on TopBar
+  // so a header's action signature is portable between components.
+  kind?: 'icon' | 'cta';
 }
 
 interface Props {
@@ -27,9 +33,11 @@ interface Props {
   centerElement?: React.ReactNode;
   // Right-side action chips.
   rightActions?: Action[];
-  // Top padding above the row. Defaults to small breathing room — the screen's
-  // SafeAreaView already supplies the status-bar inset, so the inline header just
-  // needs visual separation, not full chrome height.
+  // Top padding above the row. Defaults to a tight 4pt — the screen's
+  // SafeAreaView already supplies the status-bar inset, so the inline header
+  // only needs minimal visual separation. The previous 12pt default produced
+  // a total header height (64pt) that was actually TALLER than the solid
+  // TopBar (56pt), inverting the intended "lighter" feel.
   paddingTop?: number;
   style?: ViewStyle;
 }
@@ -55,7 +63,7 @@ export function InlineHeader({
   onBack,
   centerElement,
   rightActions = [],
-  paddingTop = 12,
+  paddingTop = 4,
   style,
 }: Props) {
   const theme = useTheme();
@@ -79,6 +87,9 @@ export function InlineHeader({
             style={({ pressed }) => [
               styles.iconBtn,
               {
+                width: 36,
+                height: 36,
+                borderRadius: 18,
                 backgroundColor: theme.colors.glass,
                 opacity: pressed ? 0.7 : 1,
               },
@@ -115,7 +126,7 @@ export function InlineHeader({
     <View
       style={[
         styles.row,
-        { paddingHorizontal: theme.screenPadding, paddingTop, paddingBottom: 8 },
+        { paddingHorizontal: theme.screenPadding, paddingTop, paddingBottom: 4 },
         style,
       ]}
     >
@@ -127,6 +138,12 @@ export function InlineHeader({
         {rightActions.map((a, i) => {
           const numericBadge = typeof a.badge === 'number' ? a.badge : null;
           const showDot = a.badge === true;
+          const isCta = a.kind === 'cta';
+          // CTA action: 40×40 gradient circle — primary creation affordance
+          // (the + on Diary / Coupons). Visually heavier than the 36×36
+          // secondary icon chips so the user's eye lands here first.
+          const btnSize = isCta ? 40 : 36;
+          const btnRadius = btnSize / 2;
           return (
             <Pressable
               key={i}
@@ -135,13 +152,32 @@ export function InlineHeader({
               style={({ pressed }) => [
                 styles.iconBtn,
                 {
-                  backgroundColor: theme.colors.glass,
-                  marginLeft: i ? 10 : 0,
+                  width: btnSize,
+                  height: btnSize,
+                  borderRadius: btnRadius,
+                  backgroundColor: isCta ? 'transparent' : theme.colors.glass,
+                  // Tightened 10 → 8 to match TopBar's right-action gap. The
+                  // 2pt extra in the old InlineHeader produced subtly
+                  // different rhythms between bar variants.
+                  marginLeft: i ? 8 : 0,
                   opacity: pressed ? 0.7 : 1,
+                  overflow: 'hidden',
                 },
               ]}
             >
-              <Feather name={a.icon} size={18} color={theme.colors.foreground} />
+              {isCta && (
+                <LinearGradient
+                  colors={theme.gradientStops as unknown as readonly [string, string]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={[StyleSheet.absoluteFill, { borderRadius: btnRadius }]}
+                />
+              )}
+              <Feather
+                name={a.icon}
+                size={isCta ? 20 : 18}
+                color={isCta ? '#fff' : theme.colors.foreground}
+              />
               {showDot && (
                 <View
                   style={[
@@ -177,17 +213,19 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    minHeight: 44,
+    // minHeight 44 → 40. With paddingTop/Bottom now 4/4, total header height
+    // is 48pt — matching the new TopBar height for cross-variant rhythm.
+    minHeight: 40,
   },
   // Side slots size to their content; center takes the remaining space. Min-width
   // 40 reserves enough room for a single icon chip so the center can stay centered
   // even when one side is empty.
   side: { flexDirection: 'row', alignItems: 'center', minWidth: 40 },
   center: { flex: 1, alignItems: 'center', paddingHorizontal: 8 },
+  // Dimensions (width/height/borderRadius) are applied dynamically per-action
+  // based on `kind` — only layout properties shared across both icon and CTA
+  // variants live here.
   iconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },

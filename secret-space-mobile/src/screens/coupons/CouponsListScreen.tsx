@@ -1,9 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
-import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { ScreenContainer, Text, EmptyState, SegmentedControl, Avatar, Chip } from '@/components';
+import { ScreenContainer, InlineHeader, Text, EmptyState, SegmentedControl, Avatar, Chip } from '@/components';
 import { useTheme } from '@/theme';
 import { couponsApi } from '@/api';
 import { Coupon, CouponStatus } from '@/types/api';
@@ -63,19 +62,17 @@ export function CouponsListScreen() {
 
   return (
     <ScreenContainer scroll={false}>
-      <View style={[styles.header, { paddingHorizontal: theme.screenPadding }]}>
-        <Text variant="h1">Coupons</Text>
-        <Pressable onPress={() => navigation.navigate('CouponCreate')} hitSlop={8}>
-          <LinearGradient
-            colors={theme.gradientStops as unknown as readonly [string, string]}
-            style={[styles.addBtn, theme.shadows.glowSoft]}
-          >
-            <Feather name="plus" size={20} color="#fff" />
-          </LinearGradient>
-        </Pressable>
-      </View>
+      {/* Migrated from a bespoke <View> header to the standardized InlineHeader
+          pattern shared with Diary, LoveBot, Vault, and Home — one component,
+          one rhythm, one height across every tab landing screen. */}
+      <InlineHeader
+        title="Coupons"
+        rightActions={[
+          { icon: 'plus', kind: 'cta', onPress: () => navigation.navigate('CouponCreate') },
+        ]}
+      />
 
-      <View style={{ paddingHorizontal: theme.screenPadding, marginTop: 16 }}>
+      <View style={{ paddingHorizontal: theme.screenPadding, marginTop: 8 }}>
         <SegmentedControl
           segments={[
             { key: 'received', label: 'Received' },
@@ -257,13 +254,6 @@ export function CouponCard({ coupon, onPress }: { coupon: Coupon; onPress: () =>
 }
 
 const styles = StyleSheet.create({
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: 8,
-  },
-  addBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   coupon: {
     borderRadius: 20,
     paddingBottom: 16,
