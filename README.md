@@ -2,8 +2,6 @@
 
 A private, secure, and deeply personal space for couples to connect, communicate, and share memories. Built as a hybrid mobile application, The Secret Space provides real-time syncing, biometric security, and dedicated features designed to strengthen relationships.
 
-![Banner](https://via.placeholder.com/1200x400?text=The+Secret+Space)
-
 ## 🌟 Key Features
 
 ### 1. **Biometric Vault** 🔒
