@@ -27,15 +27,26 @@ const start = async () => {
     logger.info('[DB] PostgreSQL connected via Prisma');
 
     // ── Verify Redis connection ──────────────────────────────────────
-    await redis.ping();
-    logger.info('[Redis] Connection verified');
+    let redisReady = false;
+    try {
+      await redis.connect();
+      await redis.ping();
+      redisReady = true;
+      logger.info('[Redis] Connection verified');
+    } catch (err: any) {
+      logger.warn({ err: err?.message }, '[Redis] Unavailable at startup; continuing in degraded mode');
+    }
 
     // Face-api.js models are lazy-loaded on first /auth/face-* request via
     // extractDescriptor() — keeps ~150 MB of TF tensors out of resident memory until
     // we actually need them, which matters on Render's 512 MB tier.
 
     // ── Start LoveBot cron job ───────────────────────────────────────
-    startLoveBotCron();
+    if (redisReady) {
+      startLoveBotCron();
+    } else {
+      logger.warn('[LoveBot] Cron not started because Redis is unavailable');
+    }
 
     // ── Start HTTP server ────────────────────────────────────────────
     const server = app.listen(PORT, () => {
@@ -43,7 +54,7 @@ const start = async () => {
     });
 
     // ── Initialize WebSockets ─────────────────────────────────────────
-    initializeChatSockets(server);
+    initializeChatSockets(server, { enableRedisAdapter: redisReady });
 
     // ── Graceful shutdown ────────────────────────────────────────────
     const shutdown = async (signal: string) => {
