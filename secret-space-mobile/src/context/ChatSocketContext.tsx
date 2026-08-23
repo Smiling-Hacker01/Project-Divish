@@ -96,6 +96,7 @@ export function ChatSocketProvider({ children }: { children: React.ReactNode }) 
   // Authoritative authenticated id this socket is bound to. Used to tear down when the
   // user changes (logout + login as different account in same session).
   const boundUserIdRef = useRef<string | null>(null);
+  const connectInFlightRef = useRef(false);
 
   const resetUnread = useCallback(() => setUnreadCount(0), []);
 
@@ -118,10 +119,13 @@ export function ChatSocketProvider({ children }: { children: React.ReactNode }) 
     // is already alive for the same user.
     if (socketRef.current && boundUserIdRef.current === userId) return;
     if (socketRef.current) teardown();
+    if (connectInFlightRef.current) return;
+    connectInFlightRef.current = true;
 
     const token = await tokens.getAccess();
     if (!token) {
       setStatus('error');
+      connectInFlightRef.current = false;
       return;
     }
 
@@ -209,6 +213,8 @@ export function ChatSocketProvider({ children }: { children: React.ReactNode }) 
     } catch {
       // non-fatal — socket will emit a fresh count on connect anyway.
     }
+    connectInFlightRef.current = false;
+    connectInFlightRef.current = false;
   }, [teardown]);
 
   // Connect when authenticated; teardown when not.

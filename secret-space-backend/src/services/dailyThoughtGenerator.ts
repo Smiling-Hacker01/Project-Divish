@@ -70,11 +70,15 @@ interface GenerateOpts {
   anniversaryDate?: string | null;
 }
 
+const GENERATION_LOCK_TTL_SECONDS = 15;
+const GENERATION_WAIT_TIMEOUT_MS = 12_000;
+const GENERATION_WAIT_INTERVAL_MS = 250;
+
 export async function generateDailyThought(opts: GenerateOpts): Promise<string> {
   const dateKey = istDateKey();
-  const cacheKey = `dailyThought:${opts.coupleId}:${dateKey}`;
+  const cacheKey = 'dailyThought:' + opts.coupleId + ':' + dateKey;
 
-  // 1. Cache hit — return immediately. Cheapest path, exercised on every Home
+  // 1. Cache hit ??? return immediately. Cheapest path, exercised on every Home
   //    open after the first one each day.
   try {
     const cached = await redis.get(cacheKey);
@@ -86,7 +90,9 @@ export async function generateDailyThought(opts: GenerateOpts): Promise<string> 
     );
   }
 
-  // 2. Cache miss — call Gemini, humanize, possibly retry, possibly fallback.
+  // 2. Cache miss ??? coordinate with a Redis lock so only one request calls
+  //    Gemini for a given couple/day at a time. Other concurrent requests wait
+  //    briefly for the cached result and fall back if the generator fails.
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     logger.warn('[DailyThought] GEMINI_API_KEY not set, using fallback bank');
@@ -94,37 +100,104 @@ export async function generateDailyThought(opts: GenerateOpts): Promise<string> 
     return pickFallback(opts.coupleId, dateKey);
   }
 
-  const firstAttempt = await callGemini(apiKey, buildPrompt(opts));
-  if (firstAttempt !== null) {
-    const decision1 = humanize(firstAttempt, { context: 'thought' });
-    if (decision1.kind === 'pass') {
-      // Cache the humanized text (not the raw Gemini output).
-      await persistToCache(cacheKey, decision1.text);
-      return decision1.text;
+  const lockKey = 'dailyThought:lock:' + opts.coupleId + ':' + dateKey;
+  const lockToken = Date.now() + ':' + Math.random().toString(36).slice(2);
+  const lockAcquired = await acquireGenerationLock(lockKey, lockToken);
+  if (!lockAcquired) {
+    const cached = await waitForCachedThought(cacheKey, GENERATION_WAIT_TIMEOUT_MS);
+    if (cached) return cached;
+
+    logger.warn({ cacheKey, lockKey }, '[DailyThought] Generation already in flight, using fallback');
+    recordOutcome('thought', 'fallback');
+    return pickFallback(opts.coupleId, dateKey);
+  }
+
+  try {
+    // Re-check after the lock in case another worker populated the cache just
+    // before we won the lock acquisition.
+    try {
+      const cached = await redis.get(cacheKey);
+      if (cached && cached.length > 10) return cached;
+    } catch (err: any) {
+      logger.warn(
+        { err: err?.message, cacheKey },
+        '[DailyThought] Redis re-read failed after lock, proceeding'
+      );
     }
 
-    if (decision1.kind === 'retry') {
-      const retryPrompt = buildPrompt(opts, decision1.hint);
-      const secondAttempt = await callGemini(apiKey, retryPrompt);
-      if (secondAttempt !== null) {
-        const decision2 = humanize(secondAttempt, { context: 'thought' });
-        if (decision2.kind === 'pass') {
-          recordOutcome('thought', 'retry-humanized');
-          await persistToCache(cacheKey, decision2.text);
-          return decision2.text;
+    const firstAttempt = await callGemini(apiKey, buildPrompt(opts));
+    if (firstAttempt !== null) {
+      const decision1 = humanize(firstAttempt, { context: 'thought' });
+      if (decision1.kind === 'pass') {
+        // Cache the humanized text (not the raw Gemini output).
+        await persistToCache(cacheKey, decision1.text);
+        return decision1.text;
+      }
+
+      if (decision1.kind === 'retry') {
+        const retryPrompt = buildPrompt(opts, decision1.hint);
+        const secondAttempt = await callGemini(apiKey, retryPrompt);
+        if (secondAttempt !== null) {
+          const decision2 = humanize(secondAttempt, { context: 'thought' });
+          if (decision2.kind === 'pass') {
+            recordOutcome('thought', 'retry-humanized');
+            await persistToCache(cacheKey, decision2.text);
+            return decision2.text;
+          }
         }
       }
     }
-  }
 
-  // Either Gemini failed outright, the first response was rejected, or the
-  // retry was also rejected. Fall back — and intentionally do NOT cache, so
-  // a transient Gemini outage doesn't lock the couple into the same bank
-  // quote for the rest of the day.
-  recordOutcome('thought', 'fallback');
-  return pickFallback(opts.coupleId, dateKey);
+    // Either Gemini failed outright, the first response was rejected, or the
+    // retry was also rejected. Fall back ??? and intentionally do NOT cache, so
+    // a transient Gemini outage doesn't lock the couple into the same bank
+    // quote for the rest of the day.
+    recordOutcome('thought', 'fallback');
+    return pickFallback(opts.coupleId, dateKey);
+  } finally {
+    await releaseGenerationLock(lockKey, lockToken);
+  }
 }
 
+async function acquireGenerationLock(lockKey: string, lockToken: string): Promise<boolean> {
+  try {
+    const result = await redis.set(lockKey, lockToken, 'EX', GENERATION_LOCK_TTL_SECONDS, 'NX');
+    return result === 'OK';
+  } catch (err: any) {
+    logger.warn({ err: err?.message, lockKey }, '[DailyThought] Redis lock acquisition failed');
+    return false;
+  }
+}
+
+async function releaseGenerationLock(lockKey: string, lockToken: string): Promise<void> {
+  try {
+    await redis.eval(
+      "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+      1,
+      lockKey,
+      lockToken
+    );
+  } catch (err: any) {
+    logger.warn({ err: err?.message, lockKey }, '[DailyThought] Redis lock release failed (non-fatal)');
+  }
+}
+
+async function waitForCachedThought(cacheKey: string, timeoutMs: number): Promise<string | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const cached = await redis.get(cacheKey);
+      if (cached && cached.length > 10) return cached;
+    } catch (err: any) {
+      logger.warn({ err: err?.message, cacheKey }, '[DailyThought] Redis read failed while waiting for cache');
+      return null;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, GENERATION_WAIT_INTERVAL_MS));
+  }
+
+  return null;
+}
 async function callGemini(apiKey: string, prompt: string): Promise<string | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
