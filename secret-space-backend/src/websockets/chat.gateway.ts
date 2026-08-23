@@ -40,7 +40,10 @@ async function emitUnreadCount(userId: string, coupleId: string): Promise<void> 
   }
 }
 
-export const initializeChatSockets = (server: HttpServer) => {
+export const initializeChatSockets = (
+  server: HttpServer,
+  opts: { enableRedisAdapter?: boolean } = {}
+) => {
   io = new SocketIOServer(server, {
     cors: {
       origin: process.env.ALLOWED_ORIGINS?.split(',').map((s) => s.trim()) || '*',
@@ -49,10 +52,16 @@ export const initializeChatSockets = (server: HttpServer) => {
     },
   });
 
-  // Redis Adapter for production scale horizontal scaling
-  const pubClient = redis.duplicate();
-  const subClient = redis.duplicate();
-  io.adapter(createAdapter(pubClient, subClient));
+  // Redis adapter is only needed when Redis is healthy. If Redis is down we
+  // still keep the HTTP server alive, but cross-process socket fanout is
+  // disabled until the next deploy/restart with a healthy Redis backend.
+  if (opts.enableRedisAdapter) {
+    const pubClient = redis.duplicate();
+    const subClient = redis.duplicate();
+    io.adapter(createAdapter(pubClient, subClient));
+  } else {
+    logger.warn('[Chat] Redis adapter disabled because Redis is unavailable');
+  }
 
   // Middleware: Authentication
   io.use((socket, next) => {
