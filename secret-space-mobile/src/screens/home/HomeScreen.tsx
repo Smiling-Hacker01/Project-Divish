@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, Easing, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { AppState, AppStateStatus, ActivityIndicator, Alert, Animated, Easing, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
@@ -13,17 +13,26 @@ import { DashboardData, Mood } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
 import { useChatSocket } from '@/context/ChatSocketContext';
 
+
 const moods: { mood: Mood; label: string }[] = [
-  { mood: '😊', label: 'Happy' },
-  { mood: '❤️', label: 'Loved' },
-  { mood: '⚡', label: 'Energized' },
-  { mood: '💭', label: 'Missing you' },
-  { mood: '😔', label: 'Sad' },
-  { mood: '🌧', label: 'Low' },
-  { mood: '😣', label: 'Stressed' },
-  { mood: '😠', label: 'Upset' },
-  { mood: '😤', label: 'Grumpy' },
+  { mood: '\u{1F60A}', label: 'Happy' },
+  { mood: '\u2764\uFE0F', label: 'Loved' },
+  { mood: '\u26A1', label: 'Energized' },
+  { mood: '\u{1F4AD}', label: 'Missing you' },
+  { mood: '\u{1F614}', label: 'Sad' },
+  { mood: '\u{1F327}', label: 'Low' },
+  { mood: '\u{1F623}', label: 'Stressed' },
+  { mood: '\u{1F620}', label: 'Upset' },
+  { mood: '\u{1F624}', label: 'Grumpy' },
 ];
+
+function calculateDaysTogether(anniversaryDate?: string | null): number {
+  if (!anniversaryDate) return 0;
+  return Math.max(
+    0,
+    Math.floor((Date.now() - new Date(anniversaryDate).getTime()) / (1000 * 60 * 60 * 24))
+  );
+}
 
 export function HomeScreen() {
   const theme = useTheme();
@@ -44,6 +53,7 @@ export function HomeScreen() {
   const reasonSpin = useRef(new Animated.Value(0)).current;
   const cooldownFade = useRef(new Animated.Value(0)).current;
   const cooldownTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dashboardFetchInFlightRef = useRef(false);
 
   // Upload the user's own avatar via multipart so large iPhone HEIC photos don't have
   // to be base64-encoded across the bridge. Backend writes to req.user.userId only —
@@ -104,19 +114,31 @@ export function HomeScreen() {
   }, [avatarUploading, refreshProfile]);
 
   const fetch = useCallback(async () => {
+    if (dashboardFetchInFlightRef.current) return;
+    dashboardFetchInFlightRef.current = true;
     try {
       const d = await dashboardApi.get();
       setData(d);
     } catch {
       // surfaced via empty fallback
+    } finally {
+      dashboardFetchInFlightRef.current = false;
     }
   }, []);
 
-  useEffect(() => {
-    fetch();
-    const id = setInterval(fetch, 5000);
-    return () => clearInterval(id);
-  }, [fetch]);
+  useFocusEffect(
+    useCallback(() => {
+      fetch();
+
+      const subscription = AppState.addEventListener('change', (state: AppStateStatus) => {
+        if (state === 'active') {
+          fetch();
+        }
+      });
+
+      return () => subscription.remove();
+    }, [fetch])
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -265,7 +287,7 @@ export function HomeScreen() {
                 Together
               </Text>
               <Text variant="numeralLarge" style={{ marginTop: 4 }}>
-                {data?.daysTogether ?? 0}
+                {calculateDaysTogether(user?.anniversaryDate)}
               </Text>
               <Text variant="bodySmall" color="muted" style={{ marginTop: 4 }}>
                 days{user?.anniversaryDate ? ` since ${new Date(user.anniversaryDate).toLocaleDateString()}` : ''}
