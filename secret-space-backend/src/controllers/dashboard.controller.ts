@@ -55,98 +55,6 @@ interface LazyDeliveryCouple {
  * Best-effort: caller wraps in .catch(); any failure leaves todaysReason as
  * whatever was last delivered.
  */
-async function maybeLazyDeliverReason(params: {
-  coupleId: string;
-  userId: string;
-  couple: LazyDeliveryCouple;
-}): Promise<void> {
-  const { coupleId, userId, couple } = params;
-
-  // Only active, fully-paired couples are eligible.
-  if (couple.status !== 'active' || !couple.userBId) return;
-
-  // Resolve the INBOUND rule for the requesting user (they are the recipient).
-  // This mirrors the cron's two directional rules from the recipient's side:
-  //   - requester is User A  → their reasons come from User B's bot, gated by
-  //     userBAccessGranted (User B must have been granted bot access).
-  //   - requester is User B  → their reasons come from User A's bot (no gate).
-  const isCreator = couple.userAId === userId;
-  const senderId = isCreator ? couple.userBId : couple.userAId;
-  const mode = isCreator ? couple.userBLoveBotMode : couple.userALoveBotMode;
-  const time = isCreator ? couple.userBLoveBotTime : couple.userALoveBotTime;
-  const gateOpen = isCreator ? couple.userBAccessGranted : true;
-
-  if (!gateOpen) return;
-  if (mode === 'off') return;
-  if (!time) return;
-
-  // Is the scheduled time for today already past? HH:MM zero-padded strings
-  // compare lexically in clock order, so a direct string compare is correct.
-  const now = istNow();
-  const currentTime = `${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`;
-  const dateKey = now.toISOString().split('T')[0];
-  if (currentTime < time) return; // not due yet today
-
-  // Atomic claim on the SHARED dedup key. SET NX succeeds only if no one (cron
-  // or another poll) has touched today's delivery for this sender. Losers get
-  // null and bail — guaranteeing exactly one delivery per sender per IST day.
-  const dedupKey = `lovebot:sent:${coupleId}:${senderId}:${dateKey}`;
-  const claimed = await redis.set(dedupKey, 'pending', 'EX', 86400, 'NX').catch(() => null);
-  if (claimed !== 'OK') return;
-
-  try {
-    // Surprise mode: same 50/50 coin-flip the cron uses. On a skip we leave
-    // the dedup key in place (downgraded to 'skipped') so today's slot is
-    // considered handled and we don't re-roll on the next poll.
-    if (mode === 'surprise' && Math.random() > 0.5) {
-      await redis.set(dedupKey, 'skipped', 'EX', 86400);
-      return;
-    }
-
-    // User-authored reasons win (oldest first), matching the cron — manually
-    // written reasons get delivered before we fall back to auto-generation.
-    let reason = await prisma.loveReason.findFirst({
-      where: { coupleId, forUserId: userId, used: false },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    if (!reason) {
-      const senderName = (isCreator ? couple.userB?.name : couple.userA?.name) ?? 'your partner';
-      const recipientName = (isCreator ? couple.userA?.name : couple.userB?.name) ?? 'you';
-      const recent = await prisma.loveReason.findMany({
-        where: { coupleId, forUserId: userId, used: true },
-        orderBy: { deliveredAt: 'desc' },
-        take: 10,
-        select: { reason: true },
-      });
-
-      const generated = await generateLoveReason({
-        senderName,
-        recipientName,
-        recentReasons: recent.map((r) => r.reason),
-      });
-
-      reason = await prisma.loveReason.create({
-        data: { coupleId, authorId: senderId, forUserId: userId, reason: generated, used: false },
-      });
-    }
-
-    await prisma.loveReason.update({
-      where: { id: reason.id },
-      data: { used: true, deliveredAt: new Date() },
-    });
-
-    await redis.set(dedupKey, 'sent', 'EX', 86400);
-    logger.info({ coupleId, userId, senderId, reasonId: reason.id, dateKey }, '[Dashboard] Lazy reason delivered');
-  } catch (err: any) {
-    // Downgrade the claim to a short TTL so a transient Gemini/DB blip doesn't
-    // lock the slot for the rest of the day — the next poll can retry.
-    await redis.set(dedupKey, 'failed', 'EX', 300).catch(() => undefined);
-    throw err;
-  }
-}
-
-// ── GET /api/dashboard ─────────────────────────────────────────────────────────
 export const getHomeData = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const userId = req.user!.userId;
@@ -177,20 +85,6 @@ export const getHomeData = async (req: Request, res: Response, next: NextFunctio
       res.status(404).json({ error: 'Couple not found' });
       return;
     }
-
-    // Lazy delivery: if the scheduled LoveBot time for THIS user has already
-    // passed today and the per-minute cron never fired for it (Render
-    // free/starter dynos sleep after ~15min idle, so the firing minute is
-    // routinely missed), promote the queued reason right here so the next
-    // dashboard poll self-heals without waiting for the cron to wake. This is
-    // idempotent against the cron via the SAME Redis dedup key the cron uses,
-    // claimed atomically (SET NX) so neither this path nor a concurrent poll
-    // can double-deliver. Best-effort: any failure inside just leaves
-    // todaysReason as whatever was last delivered.
-    await maybeLazyDeliverReason({ coupleId, userId, couple }).catch((err: any) => {
-      logger.warn({ err: err?.message, coupleId, userId }, '[Dashboard] Lazy reason delivery failed (non-fatal)');
-    });
-
     // Calculate days together
     const startDate = couple.anniversaryDate || couple.createdAt;
     const daysTogether = Math.floor(
