@@ -54,7 +54,7 @@ const start = async () => {
     });
 
     // ── Initialize WebSockets ─────────────────────────────────────────
-    initializeChatSockets(server, { enableRedisAdapter: redisReady });
+    initializeChatSockets(server);
 
     // ── Graceful shutdown ────────────────────────────────────────────
     const shutdown = async (signal: string) => {

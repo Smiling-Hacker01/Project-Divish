@@ -40,10 +40,7 @@ async function emitUnreadCount(userId: string, coupleId: string): Promise<void> 
   }
 }
 
-export const initializeChatSockets = (
-  server: HttpServer,
-  opts: { enableRedisAdapter?: boolean } = {}
-) => {
+export const initializeChatSockets = (server: HttpServer) => {
   io = new SocketIOServer(server, {
     cors: {
       origin: process.env.ALLOWED_ORIGINS?.split(',').map((s) => s.trim()) || '*',
@@ -52,16 +49,19 @@ export const initializeChatSockets = (
     },
   });
 
-  // Redis adapter is only needed when Redis is healthy. If Redis is down we
-  // still keep the HTTP server alive, but cross-process socket fanout is
-  // disabled until the next deploy/restart with a healthy Redis backend.
-  if (opts.enableRedisAdapter) {
-    const pubClient = redis.duplicate();
-    const subClient = redis.duplicate();
-    io.adapter(createAdapter(pubClient, subClient));
-  } else {
-    logger.warn('[Chat] Redis adapter disabled because Redis is unavailable');
-  }
+  // Redis adapter for production-scale cross-process fanout. Wait until the
+  // duplicated clients are actually ready before registering the adapter to
+  // avoid the startup crash we saw on Render.
+  const pubClient = redis.duplicate();
+  const subClient = redis.duplicate();
+  void Promise.all([waitForRedisReady(pubClient), waitForRedisReady(subClient)])
+    .then(() => {
+      io.adapter(createAdapter(pubClient, subClient));
+      logger.info('[Chat] Redis adapter initialized');
+    })
+    .catch((err) => {
+      logger.error({ err: err?.message ?? err }, '[Chat] Failed to initialize Redis adapter');
+    });
 
   // Middleware: Authentication
   io.use((socket, next) => {
@@ -371,3 +371,31 @@ export const initializeChatSockets = (
     });
   });
 };
+
+async function waitForRedisReady(client: typeof redis): Promise<void> {
+  if (client.status === 'ready') return;
+  if (client.status === 'end') {
+    await client.connect();
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const onReady = () => {
+      cleanup();
+      resolve();
+    };
+
+    const onError = (err: Error) => {
+      cleanup();
+      reject(err);
+    };
+
+    const cleanup = () => {
+      client.off('ready', onReady);
+      client.off('error', onError);
+    };
+
+    client.once('ready', onReady);
+    client.once('error', onError);
+  });
+}
