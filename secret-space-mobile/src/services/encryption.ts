@@ -112,6 +112,12 @@ const importRsaPrivateKeyFromPkcs8Base64 = (privateKeyBase64: string): forge.pki
   return forge.pki.privateKeyFromAsn1(asn1) as forge.pki.rsa.PrivateKey;
 };
 
+// Reusing parsed RSA keys avoids reparsing the private key for every message.
+let cachedPublicKeyBase64: string | null = null;
+let cachedPublicKey: forge.pki.rsa.PublicKey | null = null;
+let cachedPrivateKeyBase64: string | null = null;
+let cachedPrivateKey: forge.pki.rsa.PrivateKey | null = null;
+
 /**
  * Wrap a base64 AES key with the partner's RSA public key using OAEP/SHA-256, matching
  * the web client. The output is the base64 RSA ciphertext.
@@ -120,7 +126,11 @@ export const encryptAESKeyWithRSA = async (
   aesKeyBase64: string,
   partnerPublicKeyBase64: string
 ): Promise<string> => {
-  const pubKey = importRsaPublicKeyFromSpkiBase64(partnerPublicKeyBase64);
+  if (cachedPublicKeyBase64 !== partnerPublicKeyBase64) {
+    cachedPublicKey = importRsaPublicKeyFromSpkiBase64(partnerPublicKeyBase64);
+    cachedPublicKeyBase64 = partnerPublicKeyBase64;
+  }
+  const pubKey = cachedPublicKey!;
   // The web encrypts the *utf-8 bytes of the base64 string itself*, not the raw key
   // bytes. We mirror that exactly so the unwrap on the other side matches.
   const plaintextBytes = utf8ToForgeBytes(aesKeyBase64);
@@ -135,7 +145,11 @@ export const decryptAESKeyWithRSA = async (
   encryptedAesKeyBase64: string,
   myPrivateKeyBase64: string
 ): Promise<string> => {
-  const privKey = importRsaPrivateKeyFromPkcs8Base64(myPrivateKeyBase64);
+  if (cachedPrivateKeyBase64 !== myPrivateKeyBase64) {
+    cachedPrivateKey = importRsaPrivateKeyFromPkcs8Base64(myPrivateKeyBase64);
+    cachedPrivateKeyBase64 = myPrivateKeyBase64;
+  }
+  const privKey = cachedPrivateKey!;
   const ct = base64ToBytes(encryptedAesKeyBase64);
   const pt = privKey.decrypt(ct, 'RSA-OAEP', {
     md: forge.md.sha256.create(),

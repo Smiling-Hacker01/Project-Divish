@@ -167,6 +167,15 @@ export const initializeChatSockets = (server: HttpServer) => {
         const payload = schema.parse(data);
         const { coupleId } = socket.data;
 
+        if (
+          payload.content !== null &&
+          payload.content !== undefined &&
+          (!payload.senderAesKey || !payload.recipientAesKey)
+        ) {
+          if (callback) callback({ status: 'error', error: 'Encryption keys are required' });
+          return;
+        }
+
         if (!coupleId) {
           if (callback) callback({ status: 'error', error: 'No active couple room' });
           return;
@@ -282,7 +291,7 @@ export const initializeChatSockets = (server: HttpServer) => {
       const { coupleId } = socket.data;
       if (!coupleId) return;
 
-      const msg = await prisma.message.findUnique({ where: { id: data.messageId } });
+      const msg = await prisma.message.findFirst({ where: { id: data.messageId, coupleId } });
       if (msg) {
         let currentReactions = (msg.reactions as any) || {};
         currentReactions[userId] = data.emoji;
@@ -306,7 +315,7 @@ export const initializeChatSockets = (server: HttpServer) => {
       const { coupleId } = socket.data;
       if (!coupleId) return;
 
-      const msg = await prisma.message.findUnique({ where: { id: data.messageId } });
+      const msg = await prisma.message.findFirst({ where: { id: data.messageId, coupleId } });
       if (!msg) return;
 
       const now = new Date();
@@ -348,24 +357,37 @@ export const initializeChatSockets = (server: HttpServer) => {
     });
 
     // Edit a message (sender only, not allowed if already deleted-for-everyone).
-    socket.on('edit_message', async (data: { messageId: string; content: string }) => {
+    socket.on('edit_message', async (data: {
+      messageId: string;
+      content: string;
+      senderAesKey: string;
+      recipientAesKey: string;
+    }) => {
       const { coupleId } = socket.data;
       if (!coupleId) return;
       if (typeof data.content !== 'string' || data.content.trim().length === 0) return;
+      if (!data.senderAesKey || !data.recipientAesKey) return;
 
-      const msg = await prisma.message.findUnique({ where: { id: data.messageId } });
+      const msg = await prisma.message.findFirst({ where: { id: data.messageId, coupleId } });
       if (!msg) return;
       if (msg.senderId !== userId || msg.deletedForEveryone) return;
 
       const editedAt = new Date();
       await prisma.message.update({
         where: { id: data.messageId },
-        data: { content: data.content.trim(), editedAt },
+        data: {
+          content: data.content,
+          senderAesKey: data.senderAesKey,
+          recipientAesKey: data.recipientAesKey,
+          editedAt,
+        },
       });
 
       io.to(coupleId).emit('message_edited', {
         messageId: data.messageId,
-        content: data.content.trim(),
+        content: data.content,
+        senderAesKey: data.senderAesKey,
+        recipientAesKey: data.recipientAesKey,
         editedAt: editedAt.toISOString(),
       });
     });

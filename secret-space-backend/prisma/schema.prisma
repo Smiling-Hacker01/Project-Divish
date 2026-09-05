@@ -218,6 +218,7 @@ model Message {
   createdAt         DateTime @default(now()) @map("created_at")
 
   @@index([coupleId, createdAt])
+  @@index([coupleId, createdAt, id])
   // Postgres treats NULL values as distinct by default, so multiple rows with
   // `client_id IS NULL` coexist while non-null duplicates for the same sender are
   // rejected. This is what gives `send_message` its idempotency.

@@ -116,7 +116,7 @@ router.get('/history', verifyJWT, async (req, res) => {
       where: { coupleId: couple.id },
       take: take + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       include: { sender: { select: { id: true, name: true } } }
     });
 

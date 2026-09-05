@@ -24,7 +24,8 @@ export type ChatQueueEntry =
       senderAesKey: string | null;
       recipientAesKey: string | null;
       // Plaintext kept ONLY for the local UI to render the failed bubble. Never sent.
-      plainPreview: string;
+      // Session-only preview. It is intentionally omitted from persisted JSON.
+      plainPreview?: string;
       retries: number;
       lastError: string | null;
       queuedAt: number;
@@ -63,7 +64,11 @@ const load = async (): Promise<ChatQueueEntry[]> => {
   }
   try {
     const parsed = JSON.parse(raw) as ChatQueueEntry[];
-    memoryCache = Array.isArray(parsed) ? parsed : [];
+    memoryCache = Array.isArray(parsed)
+      ? parsed.map((entry) =>
+          entry.kind === 'text' ? { ...entry, plainPreview: undefined } : entry
+        )
+      : [];
   } catch {
     memoryCache = [];
   }
@@ -74,7 +79,12 @@ const persist = (): Promise<void> => {
   // Serialise persistence so concurrent calls don't trample each other's writes.
   const next = (async () => {
     await persistPromise; // wait for any prior write
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(memoryCache ?? []));
+    const persisted = (memoryCache ?? []).map((entry) => {
+      if (entry.kind !== 'text') return entry;
+      const { plainPreview: _plainPreview, ...withoutPreview } = entry;
+      return withoutPreview;
+    });
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
   })();
   persistPromise = next;
   return next;
