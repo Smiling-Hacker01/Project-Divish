@@ -10,6 +10,8 @@ import {
   StyleSheet,
   TextInput,
   View,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Feather } from '@expo/vector-icons';
@@ -56,6 +58,8 @@ export function ChatScreen() {
   const { user } = useAuth();
   const { socket, status: socketStatus, partnerOnline, resetUnread } = useChatSocket();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [draft, setDraft] = useState('');
   const [partnerTyping, setPartnerTyping] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
@@ -89,7 +93,7 @@ export function ChatScreen() {
   // Timestamp at which the currently-active keypair was first held on this
   // device. Loaded once at mount. Messages older than this can't be
   // decrypted by us — see the decrypt pump for why.
-  const [keypairCreatedAt, setKeypairCreatedAt] = useState<string | null>(null);
+  const [keypairCreatedAt, setKeypairCreatedAt] = useState<string | null | undefined>(undefined);
   const [partnerPubKey, setPartnerPubKey] = useState<string | null>(null);
   const [cryptoReady, setCryptoReady] = useState(false);
 
@@ -101,6 +105,9 @@ export function ChatScreen() {
   const recordTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const inputRef = useRef<TextInput | null>(null);
   const flatListRef = useRef<FlatList<ChatMessage> | null>(null);
+  const scrollOffsetRef = useRef(0);
+  const contentHeightRef = useRef(0);
+  const preserveScrollRef = useRef(false);
 
   // Resolvers waiting for the attach sheet to finish dismissing on iOS. The Modal's
   // onDismiss fires *after* the sheet animation completes, which is the only reliable
@@ -163,15 +170,15 @@ export function ChatScreen() {
       try {
         const keys = await getOrCreateKeyPair();
         if (cancelled) return;
+        const createdAt = await getKeypairCreatedAt();
+        if (cancelled) return;
+        setKeypairCreatedAt(createdAt);
         setMyKeys(keys);
 
         // Pull the keypair-birth timestamp once at mount. The decrypt pump
         // reads this synchronously to classify any failure as "legacy
         // (expected)" or "real bug (unexpected)" — see the catch block in
         // the decrypt useEffect below.
-        getKeypairCreatedAt().then((ts) => {
-          if (!cancelled) setKeypairCreatedAt(ts);
-        });
 
         // Re-register on every chat open (cheap, idempotent) so a partner who just
         // reinstalled immediately sees an up-to-date pub key when they query.
@@ -203,12 +210,79 @@ export function ChatScreen() {
   }, [user?.partnerId]);
 
   // ── History load ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    chatApi
-      .history()
-      .then((r) => setMessages(r.messages.slice().reverse()))
-      .catch(() => {});
+  const historyInFlightRef = useRef(false);
+  const loadHistory = useCallback(async (cursor?: string) => {
+    if (historyInFlightRef.current) return;
+    historyInFlightRef.current = true;
+    if (cursor) setLoadingOlder(true);
+    try {
+      const result = await chatApi.history(cursor);
+      const incoming = result.messages.slice().reverse();
+      setNextCursor(result.nextCursor);
+      setMessages((prev) => {
+        const byId = new Map(prev.map((message) => [message.id, message]));
+        const byClientId = new Map(
+          prev.map((message) => [
+            (message as ChatMessage & { clientId?: string | null }).clientId,
+            message,
+          ])
+        );
+        for (const message of incoming) {
+          const clientId = (message as ChatMessage & { clientId?: string | null }).clientId;
+          const optimistic = clientId ? byClientId.get(clientId) : undefined;
+          byId.set(message.id, optimistic ? { ...optimistic, ...message } : message);
+          if (optimistic && optimistic.id !== message.id) byId.delete(optimistic.id);
+        }
+        return Array.from(byId.values()).sort(
+          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+      });
+    } catch {
+      // Socket delivery and the persistent send queue remain usable offline.
+    } finally {
+      historyInFlightRef.current = false;
+      setLoadingOlder(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void loadHistory();
+  }, [loadHistory]);
+
+  useEffect(() => {
+    if (socketStatus === 'connected') void loadHistory();
+  }, [socketStatus, loadHistory]);
+
+  const loadOlder = useCallback(() => {
+    if (!nextCursor || historyInFlightRef.current || loadingOlder) return;
+    preserveScrollRef.current = true;
+    void loadHistory(nextCursor);
+  }, [loadHistory, loadingOlder, nextCursor]);
+
+  // Cache ciphertext and metadata only. Plaintext remains in memory and is
+  // never written to ordinary device storage.
+  useEffect(() => {
+    if (!user?.id || messages.length === 0) return;
+    const cacheKey = `secretspace.chat.cache:${user.id}`;
+    AsyncStorage.setItem(cacheKey, JSON.stringify(messages.slice(-100))).catch(() => undefined);
+  }, [messages, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    AsyncStorage.getItem(`secretspace.chat.cache:${user.id}`)
+      .then((raw) => {
+        if (!raw) return;
+        const cached = JSON.parse(raw) as ChatMessage[];
+        if (!Array.isArray(cached)) return;
+        setMessages((prev) => {
+          const ids = new Set(prev.map((message) => message.id));
+          return [...cached.filter((message) => !ids.has(message.id)), ...prev].sort(
+            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          );
+        });
+      })
+      .catch(() => undefined);
+  }, [user?.id]);
 
   // Restore the persistent send-queue state on mount so the user sees their failed
   // bubbles' state correctly.
@@ -221,7 +295,7 @@ export function ChatScreen() {
         const preview: Record<string, string> = {};
         entries.forEach((e) => {
           states[e.clientId] = e.lastError ? 'failed' : 'queued';
-          if (e.kind === 'text') preview[e.clientId] = e.plainPreview;
+          if (e.kind === 'text' && e.plainPreview) preview[e.clientId] = e.plainPreview;
         });
         setSendStates(states);
         setDecryptedCache((prev) => ({ ...preview, ...prev }));
@@ -256,7 +330,7 @@ export function ChatScreen() {
   // are already in the cache from the send path; receiver-side bubbles get decrypted
   // here. Mirrors web's processDecryption().
   useEffect(() => {
-    if (!myKeys || !user?.id) return;
+    if (!myKeys || !user?.id || keypairCreatedAt === undefined) return;
     let cancelled = false;
 
     (async () => {
@@ -328,7 +402,7 @@ export function ChatScreen() {
           } else if (__DEV__) {
             console.log('[Chat] Legacy message (pre-keypair) failed to decrypt:', msg.id);
           }
-          batch[msg.id] = '__LOCKED__';
+          batch[msg.id] = isLegacy ? '__LOCKED__' : '__DECRYPTION_FAILED__';
         }
 
         if (++sinceYield >= BATCH_SIZE) {
@@ -427,10 +501,24 @@ export function ChatScreen() {
       );
     };
 
-    const onEdited = (data: { messageId: string; content: string; editedAt: string }) => {
+    const onEdited = (data: {
+      messageId: string;
+      content: string;
+      senderAesKey: string;
+      recipientAesKey: string;
+      editedAt: string;
+    }) => {
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === data.messageId ? { ...m, content: data.content, editedAt: data.editedAt } : m
+          m.id === data.messageId
+            ? {
+                ...m,
+                content: data.content,
+                senderAesKey: data.senderAesKey,
+                recipientAesKey: data.recipientAesKey,
+                editedAt: data.editedAt,
+              }
+            : m
         )
       );
       // Edits arrive already-encrypted from the server too; clear the cache so the
@@ -534,7 +622,7 @@ export function ChatScreen() {
     if (!myKeys || !partnerPubKey) {
       // No pub key for partner yet — send plaintext. Receiver decryptor handles the
       // missing-wrapped-key case by treating content as plain.
-      return { content: plaintext, senderAesKey: null, recipientAesKey: null };
+      throw new Error('The partner encryption key is not available yet.');
     }
     const aesKey = await generateAESKey();
     const content = await encryptTextAES(plaintext, aesKey);
@@ -554,10 +642,29 @@ export function ChatScreen() {
     if (editingId) {
       // Edits are emitted in plaintext here; backend stores them as-is (matches web's
       // current behavior — edits aren't re-encrypted).
-      socket.emit('edit_message', { messageId: editingId, content: text });
+      let encryptedEdit: {
+        content: string;
+        senderAesKey: string | null;
+        recipientAesKey: string | null;
+      };
+      try {
+        encryptedEdit = await encryptForSend(text);
+      } catch (e: any) {
+        Alert.alert('Encryption unavailable', e?.message ?? 'Could not encrypt the edit.');
+        return;
+      }
+      socket.emit('edit_message', { messageId: editingId, ...encryptedEdit });
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === editingId ? { ...m, content: text, editedAt: new Date().toISOString() } : m
+          m.id === editingId
+            ? {
+                ...m,
+                content: encryptedEdit.content,
+                senderAesKey: encryptedEdit.senderAesKey,
+                recipientAesKey: encryptedEdit.recipientAesKey,
+                editedAt: new Date().toISOString(),
+              }
+            : m
         )
       );
       setDecryptedCache((prev) => ({ ...prev, [editingId]: text }));
@@ -1307,7 +1414,29 @@ export function ChatScreen() {
           data={visibleMessages}
           keyExtractor={(m) => m.id}
           contentContainerStyle={{ padding: theme.screenPadding, gap: 8 }}
-          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
+          onScroll={(event: NativeSyntheticEvent<NativeScrollEvent>) => {
+            const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+            scrollOffsetRef.current = contentOffset.y;
+            contentHeightRef.current = contentSize.height;
+            if (contentOffset.y < 80) loadOlder();
+            if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 80) {
+              flatListRef.current?.scrollToEnd({ animated: true });
+            }
+          }}
+          scrollEventThrottle={100}
+          onContentSizeChange={(_width, height) => {
+            const previousHeight = contentHeightRef.current;
+            contentHeightRef.current = height;
+            if (preserveScrollRef.current && height > previousHeight) {
+              preserveScrollRef.current = false;
+              flatListRef.current?.scrollToOffset({
+                offset: scrollOffsetRef.current + (height - previousHeight),
+                animated: false,
+              });
+            } else if (previousHeight === 0) {
+              flatListRef.current?.scrollToEnd({ animated: false });
+            }
+          }}
           renderItem={({ item }) => (
             <Bubble
               msg={item}
@@ -1800,14 +1929,17 @@ function Bubble({
     //     rather than as something broken.
     //   - plaintext undefined: still decrypting, show italic placeholder.
     const locked = plaintext === '__LOCKED__';
+    const failed = plaintext === '__DECRYPTION_FAILED__';
     const text = locked
       ? 'Locked. Sent from a previous device.'
+      : failed
+        ? 'Secure message unavailable.'
       : plaintext !== undefined
         ? plaintext
         : msg.content === null
           ? ''
           : 'Decrypting…';
-    const isPlaceholder = locked || (plaintext === undefined && msg.content !== null);
+    const isPlaceholder = locked || failed || (plaintext === undefined && msg.content !== null);
     inner = (
       <Text
         variant="body"
