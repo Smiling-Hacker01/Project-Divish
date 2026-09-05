@@ -1,5 +1,6 @@
 import { ChatMessage } from '@/types/api';
 import { decryptAESKeyWithRSA, decryptTextAES } from './encryption';
+import { decryptV2Text } from './chatEpochs';
 
 export type DecryptionResult = '__LOCKED__' | '__DECRYPTION_FAILED__' | string;
 
@@ -18,6 +19,9 @@ const fingerprint = (message: ChatMessage, keypairCreatedAt: string | null): str
     message.content ?? '',
     message.senderAesKey ?? '',
     message.recipientAesKey ?? '',
+    message.encryptionVersion ?? '',
+    message.keyEpochVersion ?? '',
+    message.wrappedContentKey ?? '',
     keypairCreatedAt ?? '',
   ].join('|');
 
@@ -49,6 +53,11 @@ export const decryptOnce = (
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
+        if (message.encryptionVersion === '2') {
+          const result = await decryptV2Text(userId, message);
+          cache.set(key, { fingerprint: currentFingerprint, result });
+          return result;
+        }
         const wrappedKey = message.senderId === userId
           ? message.senderAesKey
           : message.recipientAesKey;
@@ -67,16 +76,16 @@ export const decryptOnce = (
       }
     }
 
-    const isLegacy =
-      keypairCreatedAt !== null &&
-      !!message.createdAt &&
-      new Date(message.createdAt).getTime() < new Date(keypairCreatedAt).getTime();
-    const result: DecryptionResult = isLegacy ? '__LOCKED__' : '__DECRYPTION_FAILED__';
+    // A failed v2 operation is never relabeled as a previous-device message. Legacy
+    // rows retain the old compatibility state until explicit migration metadata exists.
+    const result: DecryptionResult = message.encryptionVersion === '2'
+      ? '__DECRYPTION_FAILED__'
+      : '__LOCKED__';
     cache.set(key, { fingerprint: currentFingerprint, result });
-    if (!isLegacy) {
+    if (message.encryptionVersion === '2') {
       console.error('[Chat] Decryption failed after retries', {
         messageId: message.id,
-        error: lastError,
+        error: lastError instanceof Error ? lastError.message : 'unknown error',
       });
     }
     return result;

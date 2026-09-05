@@ -1,6 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import { generateRSAKeyPair } from './encryption';
 import { chatApi } from '@/api';
+import { getDeviceKeyVersion, getOrCreateDeviceId } from './deviceIdentity';
 
 /**
  * Manages the user's RSA keypair lifecycle: load from SecureStore, generate-and-register
@@ -122,7 +123,22 @@ export const getKeypairCreatedAt = async (): Promise<string | null> => {
 export const ensurePublicKeyRegistered = async (): Promise<void> => {
   const { publicKey } = await getOrCreateKeyPair(false);
   try {
-    await chatApi.setPublicKey(publicKey);
+    const deviceId = await getOrCreateDeviceId();
+    await chatApi.registerDevice({
+      deviceId,
+      publicKey,
+      keyVersion: getDeviceKeyVersion(),
+      name: 'Android device',
+    });
+    // The first installation is explicitly bootstrapped. Later installations remain
+    // pending until an already-active device approves their one-time challenge.
+    const bootstrap = await chatApi.bootstrapDevice(deviceId).catch(() => null);
+    // Keep the legacy field only for the explicitly trusted first/current device.
+    // A pending second device must never replace User.publicKey, or it would
+    // recreate the previous-device decryption failure for existing clients.
+    if (bootstrap?.device?.status === 'active') {
+      await chatApi.setPublicKey(publicKey);
+    }
   } catch (err) {
     console.warn('[Crypto] Pub key re-registration failed', err);
   }
