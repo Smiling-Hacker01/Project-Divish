@@ -37,6 +37,11 @@ import {
 } from '@/services/encryption';
 import { getOrCreateKeyPair, ensurePublicKeyRegistered, getKeypairCreatedAt } from '@/services/cryptoIdentity';
 import { chatQueue, ChatQueueEntry } from '@/services/chatQueue';
+import {
+  decryptOnce,
+  getCachedDecryption,
+  invalidateDecryption,
+} from '@/services/chatDecryption';
 
 const QUICK_REACTIONS = ['❤️', '😂', '😮', '😢', '😠', '🔥'];
 // Local-only "delete for me" — backend forbids non-senders from setting deletedForSender,
@@ -331,6 +336,9 @@ export function ChatScreen() {
   // here. Mirrors web's processDecryption().
   useEffect(() => {
     if (!myKeys || !user?.id || keypairCreatedAt === undefined) return;
+    const resolvedUser = user;
+    const resolvedKeys = myKeys;
+    const resolvedKeypairCreatedAt = keypairCreatedAt;
     let cancelled = false;
 
     (async () => {
@@ -342,6 +350,7 @@ export function ChatScreen() {
           !m.deletedForEveryone &&
           m.content !== null &&
           cache[m.id] === undefined &&
+          getCachedDecryption(resolvedUser.id, m, resolvedKeypairCreatedAt) === undefined &&
           !m.id.startsWith('temp-') // optimistic bubbles already have plaintext cached
       );
       if (toDecrypt.length === 0) return;
@@ -367,15 +376,40 @@ export function ChatScreen() {
 
       for (const msg of ordered) {
         if (cancelled) return;
+        const cached = getCachedDecryption(resolvedUser.id, msg, resolvedKeypairCreatedAt);
+        if (cached !== undefined) {
+          batch[msg.id] = cached;
+          if (++sinceYield >= BATCH_SIZE) {
+            commit(batch);
+            batch = {};
+            sinceYield = 0;
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          }
+          continue;
+        }
+        const coordinated = await decryptOnce(
+          resolvedUser.id,
+          msg,
+          resolvedKeys.privateKey,
+          resolvedKeypairCreatedAt
+        );
+        batch[msg.id] = coordinated;
+        if (++sinceYield >= BATCH_SIZE) {
+          commit(batch);
+          batch = {};
+          sinceYield = 0;
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        continue;
         try {
-          const isMine = msg.senderId === user.id;
+          const isMine = msg.senderId === resolvedUser.id;
           const wrappedKey = isMine ? msg.senderAesKey : msg.recipientAesKey;
           if (!wrappedKey) {
             // No wrapped key for our side — treat content as plaintext (web's fallback
             // for messages sent before the keypair was registered).
             batch[msg.id] = msg.content ?? '';
           } else {
-            const aesKey = await decryptAESKeyWithRSA(wrappedKey, myKeys.privateKey);
+            const aesKey = await decryptAESKeyWithRSA(wrappedKey!, resolvedKeys.privateKey);
             const plain = await decryptTextAES(msg.content!, aesKey);
             batch[msg.id] = plain;
           }
@@ -391,13 +425,18 @@ export function ChatScreen() {
           // them per product direction) but we ALSO log the full error so
           // it shows up in console / Sentry-equivalent for investigation.
           const isLegacy =
-            keypairCreatedAt !== null &&
+            resolvedKeypairCreatedAt !== null &&
             !!msg.createdAt &&
-            new Date(msg.createdAt).getTime() < new Date(keypairCreatedAt).getTime();
+            new Date(msg.createdAt).getTime() < new Date(resolvedKeypairCreatedAt!).getTime();
           if (!isLegacy) {
             console.error(
               '[Chat] Decryption failed for a post-keypair message — this is unexpected and worth investigating:',
-              { messageId: msg.id, createdAt: msg.createdAt, keypairCreatedAt, error: err }
+              {
+                messageId: msg.id,
+                createdAt: msg.createdAt,
+                keypairCreatedAt: resolvedKeypairCreatedAt,
+                error: err,
+              }
             );
           } else if (__DEV__) {
             console.log('[Chat] Legacy message (pre-keypair) failed to decrypt:', msg.id);
@@ -484,6 +523,7 @@ export function ChatScreen() {
       type: 'for_me' | 'for_everyone';
       deletedAt?: string;
     }) => {
+      if (user?.id) invalidateDecryption(user.id, data.messageId);
       setMessages((prev) =>
         prev.map((m) =>
           m.id !== data.messageId
@@ -508,6 +548,7 @@ export function ChatScreen() {
       recipientAesKey: string;
       editedAt: string;
     }) => {
+      if (user?.id) invalidateDecryption(user.id, data.messageId);
       setMessages((prev) =>
         prev.map((m) =>
           m.id === data.messageId
