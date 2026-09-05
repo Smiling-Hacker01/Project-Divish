@@ -9,6 +9,8 @@ import {
   teardownPushNotifications,
 } from '@/services/push';
 import { clearKeyPair, getOrCreateKeyPair } from '@/services/cryptoIdentity';
+import { clearEpochSession } from '@/services/chatEpochs';
+import { clearDeviceIdentity } from '@/services/deviceIdentity';
 import { chatQueue } from '@/services/chatQueue';
 import { diaryQueue } from '@/services/diaryQueue';
 
@@ -99,10 +101,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // ignore
     }
     teardownPushNotifications();
+    clearEpochSession();
     // Drop the previous user's keypair AND every pending write so the next account
     // on this device gets a fresh identity and isn't haunted by orphan sends or
     // diary drafts from a couple that may have been dissolved.
     await clearKeyPair().catch(() => undefined);
+    await clearDeviceIdentity();
     await chatQueue.clear().catch(() => undefined);
     await diaryQueue.clear().catch(() => undefined);
     pushInitForUserRef.current = null;
@@ -131,6 +135,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setLogoutHandler(() => {
       setUserState(null);
+      clearEpochSession();
+      void clearKeyPair();
+      void clearDeviceIdentity();
       AsyncStorage.removeItem(USER_KEY);
       teardownPushNotifications();
       pushInitForUserRef.current = null;
