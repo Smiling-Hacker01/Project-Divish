@@ -150,6 +150,9 @@ export interface ChatMessage {
   // See [secret-space-mobile/src/services/encryption.ts] for the wire format.
   senderAesKey?: string | null;
   recipientAesKey?: string | null;
+  encryptionVersion?: string | null;
+  keyEpochVersion?: number | null;
+  wrappedContentKey?: string | null;
   status: 'sent' | 'delivered' | 'read';
   reactions: Record<string, string>;
   deletedForEveryone: boolean;

@@ -66,14 +66,28 @@ export const initializeChatSockets = (server: HttpServer) => {
   // Middleware: Authentication
   io.use((socket, next) => {
     const token = socket.handshake.auth.token;
+    const deviceId = socket.handshake.auth.deviceId;
     if (!token) {
       return next(new Error('Authentication token missing'));
+    }
+    if (typeof deviceId !== 'string' || !z.string().uuid().safeParse(deviceId).success) {
+      return next(new Error('Device identity missing'));
     }
 
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET!) as { userId: string };
       socket.data.userId = decoded.userId;
-      next();
+      void prisma.device.findFirst({
+        where: { id: deviceId, userId: decoded.userId, status: 'active', revokedAt: null },
+        select: { id: true },
+      }).then((device) => {
+        if (!device) {
+          next(new Error('Device is not authorized'));
+          return;
+        }
+        socket.data.deviceId = device.id;
+        next();
+      }).catch(() => next(new Error('Device authorization failed')));
     } catch (err) {
       next(new Error('Invalid token'));
     }
@@ -81,7 +95,9 @@ export const initializeChatSockets = (server: HttpServer) => {
 
   io.on('connection', async (socket: Socket) => {
     const userId = socket.data.userId;
+    const deviceId = socket.data.deviceId as string;
     connectedUsers.set(userId, socket.id);
+    void prisma.device.update({ where: { id: deviceId }, data: { lastSeenAt: new Date() } }).catch(() => undefined);
     // Per-user room: lets us push targeted events (unread_count, etc.) regardless of which
     // process holds the socket.
     socket.join(`user:${userId}`);
@@ -159,6 +175,9 @@ export const initializeChatSockets = (server: HttpServer) => {
           mediaType: z.string().nullable().optional(),
           senderAesKey: z.string().nullable().optional(),
           recipientAesKey: z.string().nullable().optional(),
+          encryptionVersion: z.enum(['1', '2']).nullable().optional(),
+          keyEpochVersion: z.number().int().positive().nullable().optional(),
+          wrappedContentKey: z.string().min(1).max(20000).nullable().optional(),
           // Client-supplied correlation id so optimistic UIs can reconcile the temp
           // bubble with the server-issued row, and the retry queue can dedupe replays.
           clientId: z.string().nullable().optional(),
@@ -167,10 +186,16 @@ export const initializeChatSockets = (server: HttpServer) => {
         const payload = schema.parse(data);
         const { coupleId } = socket.data;
 
+        if (payload.encryptionVersion === '2' &&
+          (!payload.keyEpochVersion || !payload.wrappedContentKey || payload.senderAesKey || payload.recipientAesKey)) {
+          if (callback) callback({ status: 'error', error: 'Invalid v2 encryption envelope' });
+          return;
+        }
+
         if (
           payload.content !== null &&
           payload.content !== undefined &&
-          (!payload.senderAesKey || !payload.recipientAesKey)
+          payload.encryptionVersion !== '2' && (!payload.senderAesKey || !payload.recipientAesKey)
         ) {
           if (callback) callback({ status: 'error', error: 'Encryption keys are required' });
           return;
@@ -179,6 +204,23 @@ export const initializeChatSockets = (server: HttpServer) => {
         if (!coupleId) {
           if (callback) callback({ status: 'error', error: 'No active couple room' });
           return;
+        }
+
+        if (payload.encryptionVersion === '2') {
+          const epoch = await prisma.conversationKeyEpoch.findFirst({
+            where: { coupleId, version: payload.keyEpochVersion!, status: 'active' },
+            select: { id: true },
+          });
+          const senderEnvelope = epoch
+            ? await prisma.conversationDeviceEnvelope.findUnique({
+                where: { epochId_deviceId: { epochId: epoch.id, deviceId: socket.data.deviceId as string } },
+                select: { id: true },
+              })
+            : null;
+          if (!senderEnvelope) {
+            if (callback) callback({ status: 'error', error: 'Device does not have the active epoch envelope' });
+            return;
+          }
         }
 
         // Fast path for retried sends — when the client passes a clientId we've already
@@ -209,6 +251,10 @@ export const initializeChatSockets = (server: HttpServer) => {
               mediaType: payload.mediaType || null,
               senderAesKey: payload.senderAesKey || null,
               recipientAesKey: payload.recipientAesKey || null,
+              encryptionVersion: payload.encryptionVersion || null,
+              keyEpochVersion: payload.keyEpochVersion || null,
+              wrappedContentKey: payload.wrappedContentKey || null,
+              senderDeviceId: socket.data.deviceId as string,
               status: 'sent',
             },
             include: { sender: { select: { id: true, name: true } } },
@@ -360,17 +406,32 @@ export const initializeChatSockets = (server: HttpServer) => {
     socket.on('edit_message', async (data: {
       messageId: string;
       content: string;
-      senderAesKey: string;
-      recipientAesKey: string;
+      senderAesKey?: string | null;
+      recipientAesKey?: string | null;
+      encryptionVersion?: '1' | '2' | null;
+      keyEpochVersion?: number | null;
+      wrappedContentKey?: string | null;
     }) => {
       const { coupleId } = socket.data;
       if (!coupleId) return;
       if (typeof data.content !== 'string' || data.content.trim().length === 0) return;
-      if (!data.senderAesKey || !data.recipientAesKey) return;
+      if (data.encryptionVersion === '2') {
+        if (!data.keyEpochVersion || !data.wrappedContentKey || data.senderAesKey || data.recipientAesKey) return;
+      } else if (!data.senderAesKey || !data.recipientAesKey) return;
 
       const msg = await prisma.message.findFirst({ where: { id: data.messageId, coupleId } });
       if (!msg) return;
       if (msg.senderId !== userId || msg.deletedForEveryone) return;
+
+      if (data.encryptionVersion === '2') {
+        const epoch = await prisma.conversationKeyEpoch.findFirst({
+          where: { coupleId, version: data.keyEpochVersion!, status: 'active' }, select: { id: true },
+        });
+        const envelope = epoch ? await prisma.conversationDeviceEnvelope.findUnique({
+          where: { epochId_deviceId: { epochId: epoch.id, deviceId: socket.data.deviceId as string } }, select: { id: true },
+        }) : null;
+        if (!envelope) return;
+      }
 
       const editedAt = new Date();
       await prisma.message.update({
@@ -387,8 +448,11 @@ export const initializeChatSockets = (server: HttpServer) => {
         messageId: data.messageId,
         content: data.content,
         senderAesKey: data.senderAesKey,
-        recipientAesKey: data.recipientAesKey,
-        editedAt: editedAt.toISOString(),
+          recipientAesKey: data.recipientAesKey,
+          encryptionVersion: data.encryptionVersion,
+          keyEpochVersion: data.keyEpochVersion,
+          wrappedContentKey: data.wrappedContentKey,
+          editedAt: editedAt.toISOString(),
       });
     });
   });

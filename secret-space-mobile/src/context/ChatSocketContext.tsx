@@ -11,6 +11,7 @@ import { AppState, AppStateStatus } from 'react-native';
 import { io, Socket } from 'socket.io-client';
 import { apiBaseUrl, chatApi, tokens } from '@/api';
 import { useAuth } from '@/context/AuthContext';
+import { getOrCreateDeviceId } from '@/services/deviceIdentity';
 
 /**
  * Global chat socket — lives above the navigation stack and owns the single Socket.IO
@@ -128,11 +129,12 @@ export function ChatSocketProvider({ children }: { children: React.ReactNode }) 
       connectInFlightRef.current = false;
       return;
     }
+    const deviceId = await getOrCreateDeviceId();
 
     const socketUrl = apiBaseUrl.replace(/\/api$/, '');
     setStatus('connecting');
     const s = io(socketUrl, {
-      auth: { token },
+      auth: { token, deviceId },
       // Order matters: try websocket first (fast), fall back to long-polling if the
       // WS upgrade fails. Tunneled connections (ngrok, dev tunnels) occasionally fail
       // the WS handshake on the first hop; polling keeps the chat working until the
