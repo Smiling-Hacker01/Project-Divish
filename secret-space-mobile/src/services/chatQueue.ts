@@ -17,12 +17,16 @@ export type ChatQueueEntry =
   | {
       kind: 'text';
       clientId: string;
-      content: string;
+      // Session-only source text. It is never persisted; retries use encryptedContent.
+      content?: string;
       // Encrypted blobs to send over the socket. Encryption is done by the caller before
       // enqueue; we don't store any plaintext on disk (matches web's E2EE expectations).
       encryptedContent: string;
       senderAesKey: string | null;
       recipientAesKey: string | null;
+      encryptionVersion?: string | null;
+      keyEpochVersion?: number | null;
+      wrappedContentKey?: string | null;
       // Plaintext kept ONLY for the local UI to render the failed bubble. Never sent.
       // Session-only preview. It is intentionally omitted from persisted JSON.
       plainPreview?: string;
@@ -66,9 +70,11 @@ const load = async (): Promise<ChatQueueEntry[]> => {
     const parsed = JSON.parse(raw) as ChatQueueEntry[];
     memoryCache = Array.isArray(parsed)
       ? parsed.map((entry) =>
-          entry.kind === 'text' ? { ...entry, plainPreview: undefined } : entry
+          entry.kind === 'text' ? { ...entry, content: undefined, plainPreview: undefined } : entry
         )
       : [];
+    // Remove plaintext fields left by older app versions immediately after loading.
+    void AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(memoryCache)).catch(() => undefined);
   } catch {
     memoryCache = [];
   }
@@ -81,7 +87,7 @@ const persist = (): Promise<void> => {
     await persistPromise; // wait for any prior write
     const persisted = (memoryCache ?? []).map((entry) => {
       if (entry.kind !== 'text') return entry;
-      const { plainPreview: _plainPreview, ...withoutPreview } = entry;
+      const { content: _content, plainPreview: _plainPreview, ...withoutPreview } = entry;
       return withoutPreview;
     });
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));

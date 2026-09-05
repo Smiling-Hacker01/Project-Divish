@@ -30,6 +30,9 @@ model User {
   authoredReasons  LoveReason[]     @relation("ReasonAuthor")
   receivedReasons  LoveReason[]     @relation("ReasonRecipient")
   sentMessages     Message[]        @relation("SentMessages")
+  devices          Device[]
+  recoveryKeyEnvelopes RecoveryKeyEnvelope[]
+  recoveryConversationEnvelopes RecoveryConversationEnvelope[]
 
   @@map("users")
 }
@@ -60,6 +63,8 @@ model Couple {
   coupons      Coupon[]
   loveReasons  LoveReason[]
   messages     Message[]
+  keyEpochs    ConversationKeyEpoch[]
+  recoveryConversationEnvelopes RecoveryConversationEnvelope[]
 
   @@map("couples")
 }
@@ -197,6 +202,8 @@ model Message {
   coupleId        String   @map("couple_id")
   sender          User     @relation("SentMessages", fields: [senderId], references: [id])
   senderId        String   @map("sender_id")
+  senderDeviceId  String?  @map("sender_device_id")
+  senderDevice    Device?  @relation("MessageSenderDevice", fields: [senderDeviceId], references: [id], onDelete: SetNull)
   // Client-supplied idempotency token. Combined with senderId via the unique index below
   // so a retried `send_message` returns the existing row instead of creating a duplicate.
   clientId        String?  @map("client_id")
@@ -206,6 +213,9 @@ model Message {
   senderAesKey      String?  @map("sender_aes_key")
   recipientAesKey   String?  @map("recipient_aes_key")
   status            String   @default("sent")
+  encryptionVersion String?  @map("encryption_version")
+  keyEpochVersion   Int?     @map("key_epoch_version")
+  wrappedContentKey String?  @map("wrapped_content_key")
 
   deletedForSender  Boolean  @default(false) @map("deleted_for_sender")
   deletedForEveryone Boolean @default(false) @map("deleted_for_everyone")
@@ -219,9 +229,122 @@ model Message {
 
   @@index([coupleId, createdAt])
   @@index([coupleId, createdAt, id])
+  @@index([senderDeviceId])
   // Postgres treats NULL values as distinct by default, so multiple rows with
   // `client_id IS NULL` coexist while non-null duplicates for the same sender are
   // rejected. This is what gives `send_message` its idempotency.
   @@unique([senderId, clientId], name: "sender_client_id_unique")
   @@map("messages")
+}
+
+model Device {
+  id           String   @id @default(uuid())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId       String   @map("user_id")
+  name         String?
+  status       String   @default("pending")
+  createdAt    DateTime @default(now()) @map("created_at")
+  lastSeenAt   DateTime? @map("last_seen_at")
+  revokedAt    DateTime? @map("revoked_at")
+  keys         DeviceKey[]
+  envelopes    ConversationDeviceEnvelope[]
+  sentMessages Message[] @relation("MessageSenderDevice")
+  pairingChallengesCreated PairingChallenge[] @relation("PairingChallengeCreator")
+  pairingChallengesTargeted PairingChallenge[] @relation("PairingChallengeTarget")
+
+  @@index([userId, status])
+  @@map("chat_devices")
+}
+
+model PairingChallenge {
+  id                 String   @id @default(uuid())
+  creatorDevice      Device   @relation("PairingChallengeCreator", fields: [creatorDeviceId], references: [id], onDelete: Cascade)
+  creatorDeviceId    String   @map("creator_device_id")
+  targetDevice       Device   @relation("PairingChallengeTarget", fields: [targetDeviceId], references: [id], onDelete: Cascade)
+  targetDeviceId     String   @map("target_device_id")
+  tokenHash          String   @unique @map("token_hash")
+  expiresAt          DateTime @map("expires_at")
+  usedAt             DateTime? @map("used_at")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  @@index([targetDeviceId, expiresAt])
+  @@index([creatorDeviceId, expiresAt])
+  @@map("chat_pairing_challenges")
+}
+
+model DeviceKey {
+  id          String   @id @default(uuid())
+  device      Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId    String   @map("device_id")
+  publicKey   String   @map("public_key")
+  keyVersion  Int      @map("key_version")
+  createdAt   DateTime @default(now()) @map("created_at")
+  revokedAt   DateTime? @map("revoked_at")
+
+  @@unique([deviceId, keyVersion])
+  @@index([deviceId, createdAt])
+  @@map("chat_device_keys")
+}
+
+model ConversationKeyEpoch {
+  id          String   @id @default(uuid())
+  couple      Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+  coupleId    String   @map("couple_id")
+  version     Int
+  status      String   @default("active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  retiredAt   DateTime? @map("retired_at")
+  creationRequestId String? @unique @map("creation_request_id")
+  envelopes   ConversationDeviceEnvelope[]
+
+  @@unique([coupleId, version])
+  @@index([coupleId, status])
+  @@map("conversation_key_epochs")
+}
+
+model ConversationDeviceEnvelope {
+  id              String   @id @default(uuid())
+  epoch           ConversationKeyEpoch @relation(fields: [epochId], references: [id], onDelete: Cascade)
+  epochId         String   @map("epoch_id")
+  device           Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId         String   @map("device_id")
+  keyVersion       Int      @map("key_version")
+  wrappedEpochKey  String   @map("wrapped_epoch_key")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@unique([epochId, deviceId])
+  @@index([deviceId, createdAt])
+  @@map("conversation_device_envelopes")
+}
+
+model RecoveryKeyEnvelope {
+  id                   String   @id @default(uuid())
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId               String   @map("user_id")
+  encryptionVersion    String   @map("encryption_version")
+  kdfAlgorithm         String   @map("kdf_algorithm")
+  kdfParameters        Json     @map("kdf_parameters")
+  salt                 String
+  nonce                String
+  encryptedRecoveryKey String   @map("encrypted_recovery_key")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  @@unique([userId, encryptionVersion])
+  @@map("recovery_key_envelopes")
+}
+
+model RecoveryConversationEnvelope {
+  id                 String   @id @default(uuid())
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId             String   @map("user_id")
+  couple             Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+  coupleId           String   @map("couple_id")
+  epochVersion       Int      @map("epoch_version")
+  nonce              String
+  encryptedEpochKey  String   @map("encrypted_epoch_key")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  @@unique([userId, coupleId, epochVersion])
+  @@index([userId, coupleId])
+  @@map("recovery_conversation_envelopes")
 }

@@ -37,6 +37,7 @@ import {
 } from '@/services/encryption';
 import { getOrCreateKeyPair, ensurePublicKeyRegistered, getKeypairCreatedAt } from '@/services/cryptoIdentity';
 import { chatQueue, ChatQueueEntry } from '@/services/chatQueue';
+import { distributeMissingEpochEnvelopes, encryptV2Text, refreshEpochKeys } from '@/services/chatEpochs';
 import {
   decryptOnce,
   getCachedDecryption,
@@ -187,7 +188,11 @@ export function ChatScreen() {
 
         // Re-register on every chat open (cheap, idempotent) so a partner who just
         // reinstalled immediately sees an up-to-date pub key when they query.
-        ensurePublicKeyRegistered().catch(() => undefined);
+        await ensurePublicKeyRegistered();
+        if (user?.id) {
+          await refreshEpochKeys(user.id).catch(() => undefined);
+          await distributeMissingEpochEnvelopes(user.id).catch(() => undefined);
+        }
 
         if (user?.partnerId) {
           const cached = await AsyncStorage.getItem(PARTNER_KEY_CACHE(user.partnerId));
@@ -312,6 +317,9 @@ export function ChatScreen() {
           senderId: user?.id ?? '',
           sender: { id: user?.id ?? '', name: user?.name ?? 'You' },
           content: e.kind === 'text' ? e.encryptedContent : null,
+          encryptionVersion: e.kind === 'text' ? e.encryptionVersion ?? null : null,
+          keyEpochVersion: e.kind === 'text' ? e.keyEpochVersion ?? null : null,
+          wrappedContentKey: e.kind === 'text' ? e.wrappedContentKey ?? null : null,
           mediaUrl: e.kind === 'media' ? e.mediaUrl : null,
           mediaType: e.kind === 'media' ? e.mediaType : null,
           status: 'sent',
@@ -546,6 +554,9 @@ export function ChatScreen() {
       content: string;
       senderAesKey: string;
       recipientAesKey: string;
+      encryptionVersion?: string | null;
+      keyEpochVersion?: number | null;
+      wrappedContentKey?: string | null;
       editedAt: string;
     }) => {
       if (user?.id) invalidateDecryption(user.id, data.messageId);
@@ -557,6 +568,9 @@ export function ChatScreen() {
                 content: data.content,
                 senderAesKey: data.senderAesKey,
                 recipientAesKey: data.recipientAesKey,
+                encryptionVersion: data.encryptionVersion,
+                keyEpochVersion: data.keyEpochVersion,
+                wrappedContentKey: data.wrappedContentKey,
                 editedAt: data.editedAt,
               }
             : m
@@ -659,17 +673,17 @@ export function ChatScreen() {
     content: string;
     senderAesKey: string | null;
     recipientAesKey: string | null;
+    encryptionVersion: string;
+    keyEpochVersion: number;
+    wrappedContentKey: string;
   }> => {
-    if (!myKeys || !partnerPubKey) {
+    if (!user?.id) {
       // No pub key for partner yet — send plaintext. Receiver decryptor handles the
       // missing-wrapped-key case by treating content as plain.
       throw new Error('The partner encryption key is not available yet.');
     }
-    const aesKey = await generateAESKey();
-    const content = await encryptTextAES(plaintext, aesKey);
-    const senderAesKey = await encryptAESKeyWithRSA(aesKey, myKeys.publicKey);
-    const recipientAesKey = await encryptAESKeyWithRSA(aesKey, partnerPubKey);
-    return { content, senderAesKey, recipientAesKey };
+    const encrypted = await encryptV2Text(user?.id ?? '', plaintext);
+    return { ...encrypted, senderAesKey: null, recipientAesKey: null };
   };
 
   const sendText = async () => {
@@ -687,6 +701,9 @@ export function ChatScreen() {
         content: string;
         senderAesKey: string | null;
         recipientAesKey: string | null;
+        encryptionVersion: string;
+        keyEpochVersion: number;
+        wrappedContentKey: string;
       };
       try {
         encryptedEdit = await encryptForSend(text);
@@ -703,6 +720,9 @@ export function ChatScreen() {
                 content: encryptedEdit.content,
                 senderAesKey: encryptedEdit.senderAesKey,
                 recipientAesKey: encryptedEdit.recipientAesKey,
+                encryptionVersion: encryptedEdit.encryptionVersion,
+                keyEpochVersion: encryptedEdit.keyEpochVersion,
+                wrappedContentKey: encryptedEdit.wrappedContentKey,
                 editedAt: new Date().toISOString(),
               }
             : m
@@ -717,7 +737,14 @@ export function ChatScreen() {
     setDraft('');
     const clientId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    let encrypted: { content: string; senderAesKey: string | null; recipientAesKey: string | null };
+    let encrypted: {
+      content: string;
+      senderAesKey: string | null;
+      recipientAesKey: string | null;
+      encryptionVersion: string;
+      keyEpochVersion: number;
+      wrappedContentKey: string;
+    };
     try {
       encrypted = await encryptForSend(text);
     } catch (e: any) {
@@ -738,6 +765,9 @@ export function ChatScreen() {
       encryptedContent: encrypted.content,
       senderAesKey: encrypted.senderAesKey,
       recipientAesKey: encrypted.recipientAesKey,
+      encryptionVersion: encrypted.encryptionVersion,
+      keyEpochVersion: encrypted.keyEpochVersion,
+      wrappedContentKey: encrypted.wrappedContentKey,
       plainPreview: text,
       retries: 0,
       lastError: null,
@@ -750,6 +780,9 @@ export function ChatScreen() {
         content: encrypted.content,
         senderAesKey: encrypted.senderAesKey,
         recipientAesKey: encrypted.recipientAesKey,
+        encryptionVersion: encrypted.encryptionVersion,
+        keyEpochVersion: encrypted.keyEpochVersion,
+        wrappedContentKey: encrypted.wrappedContentKey,
         clientId,
       },
       (ack: { status: 'ok' | 'error'; message?: ChatMessage; error?: string }) => {
@@ -778,6 +811,9 @@ export function ChatScreen() {
               content: entry.encryptedContent,
               senderAesKey: entry.senderAesKey,
               recipientAesKey: entry.recipientAesKey,
+              encryptionVersion: entry.encryptionVersion,
+              keyEpochVersion: entry.keyEpochVersion,
+              wrappedContentKey: entry.wrappedContentKey,
               clientId: entry.clientId,
             },
             (ack: { status: 'ok' | 'error'; message?: ChatMessage; error?: string }) => {
@@ -829,6 +865,9 @@ export function ChatScreen() {
           content: entry.encryptedContent,
           senderAesKey: entry.senderAesKey,
           recipientAesKey: entry.recipientAesKey,
+          encryptionVersion: entry.encryptionVersion,
+          keyEpochVersion: entry.keyEpochVersion,
+          wrappedContentKey: entry.wrappedContentKey,
           clientId,
         },
         (ack: { status: 'ok' | 'error'; message?: ChatMessage; error?: string }) => {
