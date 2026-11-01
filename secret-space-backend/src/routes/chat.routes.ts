@@ -119,12 +119,22 @@ router.post('/devices/bootstrap', verifyJWT, async (req, res) => {
     return;
   }
   const activeCount = await prisma.device.count({
-    where: { userId: req.user!.userId, status: 'active', revokedAt: null },
+    where: { userId: req.user!.userId, status: 'active', revokedAt: null, id: { not: device.id } },
   });
-  if (activeCount > 0 && device.status !== 'active') {
-    res.status(409).json({ error: 'Device requires approval by an active device' });
+  const allowTakeover = Boolean(req.body?.takeover);
+  if (activeCount > 0 && device.status !== 'active' && !allowTakeover) {
+    res.status(409).json({ error: 'Device requires approval by an active device', canTakeover: true });
     return;
   }
+
+  if (allowTakeover) {
+    await prisma.device.updateMany({
+      where: { userId: req.user!.userId, status: 'active', revokedAt: null, id: { not: device.id } },
+      data: { status: 'revoked', revokedAt: new Date() },
+    });
+    logger.info({ userId: req.user!.userId, newDeviceId: device.id }, '[ChatApi] Account device takeover on reinstall');
+  }
+
   const updated = await prisma.device.update({
     where: { id: device.id },
     data: { status: 'active', revokedAt: null, lastSeenAt: new Date() },
@@ -529,9 +539,26 @@ router.put('/keys', verifyJWT, async (req, res) => {
   }
 });
 
-// GET /api/chat/keys/:partnerId - Get partner's public key
+// GET /api/chat/keys/:partnerId - Get partner's public key (SEC-05 IDOR fix)
 router.get('/keys/:partnerId', verifyJWT, async (req, res) => {
   try {
+    const userId = req.user!.userId;
+    const couple = await prisma.couple.findFirst({
+      where: {
+        OR: [{ userAId: userId }, { userBId: userId }],
+        status: 'active',
+      },
+    });
+
+    if (!couple) {
+      return res.status(403).json({ error: 'You are not part of an active couple space' });
+    }
+
+    const authorizedPartnerId = couple.userAId === userId ? couple.userBId : couple.userAId;
+    if (req.params.partnerId !== authorizedPartnerId) {
+      return res.status(403).json({ error: 'Unauthorized to view this user public key' });
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: req.params.partnerId },
       select: { publicKey: true },
@@ -568,7 +595,13 @@ router.get('/history', verifyJWT, async (req, res) => {
     const take = 50;
 
     const messages = await prisma.message.findMany({
-      where: { coupleId: couple.id },
+      where: {
+        coupleId: couple.id,
+        NOT: [
+          { senderId: userId, deletedForSender: true },
+          { senderId: { not: userId }, deletedForRecipient: true },
+        ],
+      },
       take: take + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
