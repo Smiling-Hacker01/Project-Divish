@@ -7,6 +7,10 @@ import { ScreenContainer, TopBar, Text, Button, Input } from '@/components';
 import { useTheme } from '@/theme';
 import { vaultApi } from '@/api';
 import { vaultUploadManager } from '@/services/vaultUploadManager';
+import { useAuth } from '@/context/AuthContext';
+import { getOrCreateDeviceId } from '@/services/deviceIdentity';
+import { getOrCreateKeyPair } from '@/services/cryptoIdentity';
+import { signData } from '@/services/encryption';
 
 // After this many consecutive biometric failures we stop offering the biometric
 // option and force the password path. OS-level rate limiting kicks in after ~5
@@ -17,6 +21,7 @@ const MAX_BIOMETRIC_ATTEMPTS = 3;
 export function VaultUnlockScreen() {
   const theme = useTheme();
   const navigation = useNavigation<any>();
+  const { user } = useAuth();
   const [showPasswordField, setShowPasswordField] = useState(false);
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -79,7 +84,11 @@ export function VaultUnlockScreen() {
       }
       // Successful unlock — reset the counter so a future re-lock starts fresh.
       setBiometricAttempts(0);
-      await vaultApi.unlock();
+      const deviceId = await getOrCreateDeviceId();
+      const keys = await getOrCreateKeyPair(false);
+      const timestamp = Date.now();
+      const signature = signData(`vault-unlock:${user?.id}:${timestamp}`, keys.privateKey);
+      await vaultApi.unlock({ deviceId, signature, timestamp });
       // Resume any uploads that were paused when the token expired mid-batch.
       vaultUploadManager.resumeAfterUnlock();
       navigation.replace('VaultGrid');
