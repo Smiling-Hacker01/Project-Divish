@@ -2,7 +2,7 @@ const mockStore = new Map<string, string>();
 const mockApi = {
   epochEnvelopes: jest.fn(async () => ({ envelopes: [] })),
   epochRecipients: jest.fn(),
-  createEpoch: jest.fn(async () => ({ epoch: { version: 1 } })),
+  createEpoch: jest.fn(async (_dId?: string, _payload?: any) => ({ epoch: { version: 1 } as any })),
   epochDistributionStatus: jest.fn(),
   submitEpochEnvelope: jest.fn(),
   registerDevice: jest.fn(async () => ({ ok: true })),
@@ -207,5 +207,79 @@ describe('v2 epoch message lifecycle and reliability', () => {
     const encrypted = await encryptV2Text('user-a', 'Resilient message');
     expect(encrypted.encryptionVersion).toBe('2');
     expect(chatApi.createEpoch).toHaveBeenCalled();
+  }, 30000);
+
+  it('handles the case where BOTH devices fresh install without crashing or breaking new chats', async () => {
+    // Phase 1: An old message existed from Epoch 1 before the uninstall
+    const oldEpoch1Message = {
+      id: 'old-epoch-1-msg',
+      senderId: 'user-a',
+      content: 'enc-epoch-1-ciphertext',
+      sender: { id: 'user-a', name: 'Alice' },
+      coupleId: 'couple-1',
+      mediaUrl: null,
+      mediaType: null,
+      senderAesKey: null,
+      recipientAesKey: null,
+      encryptionVersion: '2',
+      keyEpochVersion: 1,
+      wrappedContentKey: 'wrapped-content-key-1',
+      status: 'sent' as const,
+      reactions: {},
+      deletedForEveryone: false,
+      deletedForSender: false,
+      createdAt: new Date().toISOString(),
+    };
+
+    // Phase 2: BOTH devices uninstall (local storage, SecureStore, and private keys wiped)
+    mockStore.clear();
+    clearEpochSession();
+    clearDecryptionSession();
+
+    // Phase 3: Both devices fresh install -> generate brand new device IDs and keypairs A2 & B2
+    const devA2Keys = await generateRSAKeyPair();
+    const devB2Keys = await generateRSAKeyPair();
+    const devA2Id = '11111111-2222-3333-4444-555555555555';
+    const devB2Id = '66666666-7777-8888-9999-000000000000';
+
+    mockStore.set('secretspace.deviceId', devA2Id);
+    mockStore.set('secretspace.rsaPrivateKey', devA2Keys.privateKey);
+    mockStore.set('secretspace.rsaPublicKey', devA2Keys.publicKey);
+
+    // Old Epoch 1 envelopes were encrypted for destroyed keys A1 and B1,
+    // so new device A2 receives NO usable envelopes for Epoch 1.
+    mockApi.epochEnvelopes.mockResolvedValue({ envelopes: [] });
+
+    // When A2 views old Epoch 1 messages, it safely marks them __DECRYPTION_FAILED__
+    // without throwing unhandled rejections, UI freezing, or crashing
+    const oldDecryptResult = await decryptOnce('user-a', oldEpoch1Message, devA2Keys.privateKey, null);
+    expect(oldDecryptResult).toBe('__DECRYPTION_FAILED__');
+
+    // Phase 4: A2 sends a new message to B2.
+    // Active recipients on the backend are now A2 and B2
+    mockApi.epochRecipients.mockResolvedValue({
+      recipients: [
+        { id: devA2Id, userId: 'user-a', publicKey: devA2Keys.publicKey, keyVersion: 1 },
+        { id: devB2Id, userId: 'user-b', publicKey: devB2Keys.publicKey, keyVersion: 1 },
+      ],
+    });
+    mockApi.createEpoch.mockImplementation(async (_dId?: string, payload?: any) => ({
+      epoch: { version: 2, envelopes: payload?.envelopes ?? [] },
+    }));
+
+    // Calling encryptV2Text detects no usable existing epoch on A2 and seamlessly creates Epoch 2!
+    const newEncrypted = await encryptV2Text('user-a', 'Hello from our fresh installs!');
+    expect(newEncrypted.encryptionVersion).toBe('2');
+    expect(newEncrypted.keyEpochVersion).toBe(2);
+    expect(mockApi.createEpoch).toHaveBeenCalled();
+
+    // Verify B2 can unwrap the newly created Epoch 2 envelope and decrypt the new message
+    const epochPayload = (mockApi.createEpoch as jest.Mock).mock.calls[0]?.[1];
+    expect(epochPayload).toBeDefined();
+    const b2Envelope = epochPayload.envelopes.find((e: any) => e.deviceId === devB2Id);
+    expect(b2Envelope).toBeDefined();
+
+    const unwrappedEpochKeyByB2 = await decryptAESKeyWithRSA(b2Envelope.wrappedEpochKey, devB2Keys.privateKey);
+    expect(unwrappedEpochKeyByB2).toBeTruthy();
   }, 30000);
 });
