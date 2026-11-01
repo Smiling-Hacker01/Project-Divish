@@ -1996,18 +1996,19 @@ function Bubble({
     // with a clock icon instead of technical "failed to decrypt" or "locked" errors.
     if (isWaiting) {
       inner = (
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 2 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 2 }}>
           <Feather
             name="clock"
             size={13}
             color={mine ? 'rgba(255,255,255,0.7)' : theme.colors.muted}
-            style={{ marginRight: 6 }}
+            style={{ marginRight: 6, marginTop: 2 }}
           />
           <Text
             variant="bodySmall"
             style={{
               color: mine ? 'rgba(255,255,255,0.85)' : theme.colors.muted,
               fontStyle: 'italic',
+              flexShrink: 1,
             }}
           >
             Waiting for this message. This may take a while.
@@ -2043,7 +2044,10 @@ function Bubble({
       onPress={isWaiting ? onWaitingPress : undefined}
       onLongPress={onLongPress}
       delayLongPress={200}
-      style={{ alignItems: mine ? 'flex-end' : 'flex-start' }}
+      style={({ pressed }) => [
+        { alignItems: mine ? 'flex-end' : 'flex-start' },
+        isWaiting && pressed && { opacity: 0.75 },
+      ]}
     >
       <View
         style={{
