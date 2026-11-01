@@ -12,6 +12,8 @@ import { io, Socket } from 'socket.io-client';
 import { apiBaseUrl, chatApi, tokens } from '@/api';
 import { useAuth } from '@/context/AuthContext';
 import { getOrCreateDeviceId } from '@/services/deviceIdentity';
+import { distributeMissingEpochEnvelopes, refreshEpochKeys } from '@/services/chatEpochs';
+import { ensurePublicKeyRegistered } from '@/services/cryptoIdentity';
 
 /**
  * Global chat socket — lives above the navigation stack and owns the single Socket.IO
@@ -53,6 +55,8 @@ interface ChatSocketCtx {
   subscribeDiary: (fn: DiaryListener) => () => void;
   // Subscribe to coupon lifecycle changes (created, status, fulfilled, reviewed).
   subscribeCoupons: (fn: CouponListener) => () => void;
+  // Subscribe to epoch key and envelope sync events to unlock messages in real time.
+  subscribeEpochUpdates: (fn: () => void) => () => void;
 }
 
 const Context = createContext<ChatSocketCtx | null>(null);
@@ -91,6 +95,16 @@ export function ChatSocketProvider({ children }: { children: React.ReactNode }) 
     couponListenersRef.current.add(fn);
     return () => {
       couponListenersRef.current.delete(fn);
+    };
+  }, []);
+
+  // Epoch update listeners — fired when new conversation epoch envelopes arrive from
+  // the partner so chat messages decrypt in real time without lag or manual reloads.
+  const epochListenersRef = useRef<Set<() => void>>(new Set());
+  const subscribeEpochUpdates = useCallback((fn: () => void) => {
+    epochListenersRef.current.add(fn);
+    return () => {
+      epochListenersRef.current.delete(fn);
     };
   }, []);
 
@@ -151,14 +165,21 @@ export function ChatSocketProvider({ children }: { children: React.ReactNode }) 
     socketRef.current = s;
     boundUserIdRef.current = userId;
 
-    s.on('connect', () => setStatus('connected'));
+    s.on('connect', () => {
+      setStatus('connected');
+      void refreshEpochKeys(userId).catch(() => undefined);
+      void distributeMissingEpochEnvelopes(userId).catch(() => undefined);
+    });
     s.on('disconnect', () => setStatus('connecting'));
     s.on('connect_error', (err) => {
       console.warn('[ChatSocket] connect_error', err?.message);
       setStatus('error');
       // Retry connection after a short backoff (e.g. if device was still activating)
-      setTimeout(() => {
+      setTimeout(async () => {
         if (socketRef.current === s && !s.connected) {
+          if (err?.message?.includes('Device is not authorized')) {
+            await ensurePublicKeyRegistered().catch(() => undefined);
+          }
           s.connect();
         }
       }, 2500);
@@ -213,6 +234,26 @@ export function ChatSocketProvider({ children }: { children: React.ReactNode }) 
       });
     });
 
+    // Epoch synchronization — partner registered a new device and needs wrapped epoch keys
+    s.on('epoch_sync_needed', () => {
+      void distributeMissingEpochEnvelopes(userId).catch(() => undefined);
+    });
+
+    // Epoch envelopes updated — partner wrapped and uploaded epoch keys for our device
+    s.on('epoch_envelopes_updated', () => {
+      void refreshEpochKeys(userId)
+        .then(() => {
+          epochListenersRef.current.forEach((fn) => {
+            try {
+              fn();
+            } catch (err) {
+              if (__DEV__) console.log('[ChatSocket] epoch update listener threw', err);
+            }
+          });
+        })
+        .catch(() => undefined);
+    });
+
     // Fetch initial count from REST so the badge is correct before the first socket
     // event arrives. Live updates take over afterwards.
     try {
@@ -221,7 +262,6 @@ export function ChatSocketProvider({ children }: { children: React.ReactNode }) 
     } catch {
       // non-fatal — socket will emit a fresh count on connect anyway.
     }
-    connectInFlightRef.current = false;
     connectInFlightRef.current = false;
   }, [teardown]);
 
@@ -244,7 +284,12 @@ export function ChatSocketProvider({ children }: { children: React.ReactNode }) 
     const handler = (state: AppStateStatus) => {
       if (state === 'active' && user?.id && isAuthenticated) {
         const s = socketRef.current;
-        if (!s || !s.connected) void connect(user.id);
+        if (!s || !s.connected) {
+          void connect(user.id);
+        } else {
+          void refreshEpochKeys(user.id).catch(() => undefined);
+          void distributeMissingEpochEnvelopes(user.id).catch(() => undefined);
+        }
       }
     };
     const sub = AppState.addEventListener('change', handler);
@@ -267,11 +312,9 @@ export function ChatSocketProvider({ children }: { children: React.ReactNode }) 
       resetUnread,
       subscribeDiary,
       subscribeCoupons,
+      subscribeEpochUpdates,
     }),
-    // socketRef.current isn't in deps because it's a ref; consumers needing a fresh
-    // socket can read it via the hook and the status state will force re-renders when
-    // the connection establishes or drops.
-    [status, partnerOnline, unreadCount, resetUnread, subscribeDiary, subscribeCoupons]
+    [status, partnerOnline, unreadCount, resetUnread, subscribeDiary, subscribeCoupons, subscribeEpochUpdates]
   );
 
   return <Context.Provider value={value}>{children}</Context.Provider>;

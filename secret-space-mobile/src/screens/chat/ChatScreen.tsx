@@ -62,7 +62,7 @@ type SendStatus = 'queued' | 'failed';
 export function ChatScreen() {
   const theme = useTheme();
   const { user } = useAuth();
-  const { socket, status: socketStatus, partnerOnline, resetUnread } = useChatSocket();
+  const { socket, status: socketStatus, partnerOnline, resetUnread, subscribeEpochUpdates } = useChatSocket();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -102,6 +102,23 @@ export function ChatScreen() {
   const [keypairCreatedAt, setKeypairCreatedAt] = useState<string | null | undefined>(undefined);
   const [partnerPubKey, setPartnerPubKey] = useState<string | null>(null);
   const [cryptoReady, setCryptoReady] = useState(false);
+
+  // Re-run decryption pump when epoch envelopes arrive via real-time socket sync
+  useEffect(() => {
+    return subscribeEpochUpdates(() => {
+      setDecryptedCache((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const [id, val] of Object.entries(next)) {
+          if (val === '__DECRYPTION_FAILED__' || val === '__LOCKED__') {
+            delete next[id];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    });
+  }, [subscribeEpochUpdates]);
 
   // ── Retry / queue state ──────────────────────────────────────────────────────
   // Mirror of the persistent chatQueue keyed by clientId — used by the UI to render
@@ -364,54 +381,35 @@ export function ChatScreen() {
       if (toDecrypt.length === 0) return;
 
       // Decrypt newest-first (the messages at the bottom of the list the user
-      // is actually looking at) and commit in small batches with a yield
-      // between them. decryptAESKeyWithRSA uses pure-JS node-forge RSA, which
-      // is synchronous and CPU-heavy: decrypting a large backlog in one tight
-      // loop monopolizes the single JS thread for tens of seconds, which froze
-      // navigation and touch when leaving the chat ("stuck, then recovers").
-      // Yielding (setTimeout 0) between batches lets the navigator, gesture
-      // handler, and renderer interleave, so the UI stays responsive while
-      // bubbles fill in progressively instead of all-at-once-after-a-freeze.
+      // is actually looking at) and commit in small parallel batches with a frame yield.
+      // Batching via Promise.all across non-blocking AES-GCM prevents lag and single-thread JS stalls.
       const ordered = [...toDecrypt].reverse();
-      const BATCH_SIZE = 6;
-      let batch: Record<string, string> = {};
-      let sinceYield = 0;
+      const CHUNK_SIZE = 8;
 
-      const commit = (updates: Record<string, string>) => {
-        if (cancelled || Object.keys(updates).length === 0) return;
-        setDecryptedCache((prev) => ({ ...prev, ...updates }));
-      };
-
-      for (const msg of ordered) {
+      for (let i = 0; i < ordered.length; i += CHUNK_SIZE) {
         if (cancelled) return;
-        const cached = getCachedDecryption(resolvedUser.id, msg, resolvedKeypairCreatedAt);
-        if (cached !== undefined) {
-          batch[msg.id] = cached;
-          if (++sinceYield >= BATCH_SIZE) {
-            commit(batch);
-            batch = {};
-            sinceYield = 0;
-            await new Promise((resolve) => setTimeout(resolve, 0));
-          }
-          continue;
-        }
-        const coordinated = await decryptOnce(
-          resolvedUser.id,
-          msg,
-          resolvedKeys.privateKey,
-          resolvedKeypairCreatedAt
+        const chunk = ordered.slice(i, i + CHUNK_SIZE);
+        const results = await Promise.all(
+          chunk.map(async (msg) => {
+            const cached = getCachedDecryption(resolvedUser.id, msg, resolvedKeypairCreatedAt);
+            if (cached !== undefined) return { id: msg.id, result: cached };
+            const coordinated = await decryptOnce(
+              resolvedUser.id,
+              msg,
+              resolvedKeys.privateKey,
+              resolvedKeypairCreatedAt
+            );
+            return { id: msg.id, result: coordinated };
+          })
         );
-        batch[msg.id] = coordinated;
-        if (++sinceYield >= BATCH_SIZE) {
-          commit(batch);
-          batch = {};
-          sinceYield = 0;
-          await new Promise((resolve) => setTimeout(resolve, 0));
+        if (cancelled) return;
+        const updates: Record<string, string> = {};
+        for (const r of results) {
+          updates[r.id] = r.result;
         }
+        setDecryptedCache((prev) => ({ ...prev, ...updates }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
       }
-
-      // Flush any trailing partial batch.
-      commit(batch);
     })();
 
     return () => {
@@ -425,10 +423,10 @@ export function ChatScreen() {
 
     const onReceive = (msg: ChatMessage & { clientId?: string | null }) => {
       // If this is our own message echoing back (replay from server, e.g. another
-      // device or after reconnect), reconcile by clientId.
+      // device or after reconnect), reconcile by clientId or id.
       if (msg.clientId && msg.senderId === user?.id) {
         setMessages((prev) =>
-          prev.map((m) => (m.id === msg.clientId ? { ...m, ...msg } : m))
+          prev.map((m) => (m.id === msg.clientId || m.id === msg.id ? { ...m, ...msg } : m))
         );
         // We may have already cached the plaintext under clientId — copy to server id.
         setDecryptedCache((prev) =>

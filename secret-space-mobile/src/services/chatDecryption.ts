@@ -72,6 +72,11 @@ export const decryptOnce = (
         return result;
       } catch (error) {
         lastError = error;
+        // For V2 messages, missing epoch envelopes cannot be resolved by an immediate local
+        // backoff sleep loop. We break immediately so the UI thread doesn't stutter or freeze.
+        if (message.encryptionVersion === '2') {
+          break;
+        }
         if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
       }
     }
@@ -83,7 +88,7 @@ export const decryptOnce = (
       : '__LOCKED__';
     cache.set(key, { fingerprint: currentFingerprint, result });
     if (message.encryptionVersion === '2') {
-      console.error('[Chat] Decryption failed after retries', {
+      console.warn('[Chat] Decryption pending epoch key', {
         messageId: message.id,
         error: lastError instanceof Error ? lastError.message : 'unknown error',
       });
@@ -104,6 +109,16 @@ export const invalidateDecryption = (userId: string, messageId: string): void =>
   cache.delete(cacheKey(userId, messageId));
 };
 
+export const invalidateFailedDecryptions = (userId?: string): void => {
+  for (const [key, entry] of cache.entries()) {
+    if (!userId || key.startsWith(`${userId}:`)) {
+      if (entry.result === '__DECRYPTION_FAILED__' || entry.result === '__LOCKED__') {
+        cache.delete(key);
+      }
+    }
+  }
+};
+
 export const clearDecryptionSession = (userId?: string): void => {
   if (!userId) {
     cache.clear();
@@ -111,3 +126,4 @@ export const clearDecryptionSession = (userId?: string): void => {
   }
   for (const key of cache.keys()) if (key.startsWith(`${userId}:`)) cache.delete(key);
 };
+
