@@ -80,7 +80,7 @@ export const getCoupleMoods = async (req: Request, res: Response, next: NextFunc
 
     const moods = await prisma.mood.findMany({
       where: { coupleId },
-      select: { userId: true, mood: true, updatedAt: true },
+      select: { userId: true, mood: true, note: true, updatedAt: true },
     });
 
     const myMood = moods.find((m) => m.userId === userId);
@@ -88,7 +88,9 @@ export const getCoupleMoods = async (req: Request, res: Response, next: NextFunc
 
     res.json({
       myMood: myMood?.mood || null,
+      myNote: myMood?.note || null,
       partnerMood: partnerMood?.mood || null,
+      partnerNote: partnerMood?.note || null,
     });
   } catch (err) {
     next(err);

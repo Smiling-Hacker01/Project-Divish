@@ -408,57 +408,6 @@ export function ChatScreen() {
           sinceYield = 0;
           await new Promise((resolve) => setTimeout(resolve, 0));
         }
-        continue;
-        try {
-          const isMine = msg.senderId === resolvedUser.id;
-          const wrappedKey = isMine ? msg.senderAesKey : msg.recipientAesKey;
-          if (!wrappedKey) {
-            // No wrapped key for our side — treat content as plaintext (web's fallback
-            // for messages sent before the keypair was registered).
-            batch[msg.id] = msg.content ?? '';
-          } else {
-            const aesKey = await decryptAESKeyWithRSA(wrappedKey!, resolvedKeys.privateKey);
-            const plain = await decryptTextAES(msg.content!, aesKey);
-            batch[msg.id] = plain;
-          }
-        } catch (err) {
-          // Classify: was this message authored BEFORE the device's current
-          // keypair was created? If so, the failure is expected — the AES key
-          // was wrapped to the previous public key and the matching private
-          // key is gone (likely a reinstall or APK signing-key change wiped
-          // SecureStore). Show the user a soft, honest line instead of a
-          // scary "Decryption Error". If the message is NEWER than our
-          // keypair birth, this is a real bug — we still surface the same
-          // friendly copy to the user (no scary technical messages reach
-          // them per product direction) but we ALSO log the full error so
-          // it shows up in console / Sentry-equivalent for investigation.
-          const isLegacy =
-            resolvedKeypairCreatedAt !== null &&
-            !!msg.createdAt &&
-            new Date(msg.createdAt).getTime() < new Date(resolvedKeypairCreatedAt!).getTime();
-          if (!isLegacy) {
-            console.error(
-              '[Chat] Decryption failed for a post-keypair message — this is unexpected and worth investigating:',
-              {
-                messageId: msg.id,
-                createdAt: msg.createdAt,
-                keypairCreatedAt: resolvedKeypairCreatedAt,
-                error: err,
-              }
-            );
-          } else if (__DEV__) {
-            console.log('[Chat] Legacy message (pre-keypair) failed to decrypt:', msg.id);
-          }
-          batch[msg.id] = isLegacy ? '__LOCKED__' : '__DECRYPTION_FAILED__';
-        }
-
-        if (++sinceYield >= BATCH_SIZE) {
-          commit(batch);
-          batch = {};
-          sinceYield = 0;
-          // Hand the JS thread back to the event loop before the next batch.
-          await new Promise((resolve) => setTimeout(resolve, 0));
-        }
       }
 
       // Flush any trailing partial batch.

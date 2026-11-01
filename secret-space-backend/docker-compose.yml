@@ -17,7 +17,7 @@ services:
     container_name: secret_space_redis
     restart: unless-stopped
     ports:
-      - "6380:6379"
+      - "6381:6379"
     volumes:
       - redis_data:/data
 

@@ -218,6 +218,7 @@ model Message {
   wrappedContentKey String?  @map("wrapped_content_key")
 
   deletedForSender  Boolean  @default(false) @map("deleted_for_sender")
+  deletedForRecipient Boolean @default(false) @map("deleted_for_recipient")
   deletedForEveryone Boolean @default(false) @map("deleted_for_everyone")
   deletedAt         DateTime? @map("deleted_at")
   editedAt          DateTime? @map("edited_at")
@@ -246,6 +247,7 @@ model Device {
   createdAt    DateTime @default(now()) @map("created_at")
   lastSeenAt   DateTime? @map("last_seen_at")
   revokedAt    DateTime? @map("revoked_at")
+  fcmToken     String?  @map("fcm_token")
   keys         DeviceKey[]
   envelopes    ConversationDeviceEnvelope[]
   sentMessages Message[] @relation("MessageSenderDevice")

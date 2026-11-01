@@ -203,3 +203,15 @@ export const decryptTextAES = async (
   if (!ok) throw new Error('AES-GCM authentication failed');
   return forgeBytesToUtf8(decipher.output.getBytes());
 };
+
+export const signData = (data: string, privateKeyBase64: string): string => {
+  if (cachedPrivateKeyBase64 !== privateKeyBase64) {
+    cachedPrivateKey = importRsaPrivateKeyFromPkcs8Base64(privateKeyBase64);
+    cachedPrivateKeyBase64 = privateKeyBase64;
+  }
+  const privateKey = cachedPrivateKey!;
+  const md = forge.md.sha256.create();
+  md.update(data, 'utf8');
+  const signatureBytes = privateKey.sign(md);
+  return bytesToBase64(signatureBytes);
+};

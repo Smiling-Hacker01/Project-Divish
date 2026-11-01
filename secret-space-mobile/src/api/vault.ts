@@ -35,10 +35,13 @@ export const vaultApi = {
     await AsyncStorage.removeItem(VAULT_TOKEN_KEY);
   },
 
-  unlock: async (password?: string) => {
+  unlock: async (
+    payload?: string | { password?: string; deviceId?: string; signature?: string; timestamp?: number }
+  ) => {
+    const body = typeof payload === 'string' ? { password: payload } : (payload ?? {});
     const { data } = await apiClient.post<{ success: boolean; token: string }>(
       '/vault/unlock',
-      password ? { password } : {}
+      body
     );
     if (data.token) await vaultApi.setToken(data.token);
     return data;

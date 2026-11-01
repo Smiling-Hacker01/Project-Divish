@@ -91,13 +91,57 @@ export const getHomeData = async (req: Request, res: Response, next: NextFunctio
       (Date.now() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24)
     );
 
-    // Fetch moods
+    // The partner's LoveBot send time tells us when YOU will receive it.
+    const isCreator = couple.userAId === userId;
+    const partnerId = isCreator ? couple.userBId : couple.userAId;
+    const partnerLoveBotMode = isCreator ? couple.userBLoveBotMode : couple.userALoveBotMode;
+    const senderTime = isCreator ? couple.userBLoveBotTime : couple.userALoveBotTime;
+
+    // Self-healing LoveBot delivery check (DATA-03): If the scheduled time has passed
+    // today and Render sleep missed the cron tick, promote queued reason on dashboard load.
+    if (partnerId && partnerLoveBotMode !== 'off') {
+      try {
+        const nowIST = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+        const currentISTTime = `${String(nowIST.getUTCHours()).padStart(2, '0')}:${String(nowIST.getUTCMinutes()).padStart(2, '0')}`;
+        const dateKey = nowIST.toISOString().split('T')[0];
+        const dedupKey = `lovebot:sent:${coupleId}:${partnerId}:${dateKey}`;
+
+        if (currentISTTime >= senderTime) {
+          const alreadyClaimed = await redis.get(dedupKey);
+          if (!alreadyClaimed) {
+            const acquired = await redis.set(dedupKey, 'delivering', 'EX', 86400, 'NX');
+            if (acquired) {
+              const reasonToDeliver = await prisma.loveReason.findFirst({
+                where: { coupleId, forUserId: userId, used: false },
+                orderBy: { createdAt: 'asc' },
+              });
+              if (reasonToDeliver) {
+                await prisma.loveReason.update({
+                  where: { id: reasonToDeliver.id },
+                  data: { used: true, deliveredAt: new Date() },
+                });
+                await redis.set(dedupKey, 'delivered', 'EX', 86400);
+                logger.info({ coupleId, userId, dateKey }, '[Dashboard] Self-healed missed LoveBot delivery');
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        logger.warn({ err: err?.message, coupleId }, '[Dashboard] Self-healing check failed (non-fatal)');
+      }
+    }
+
+    // Fetch moods (DATA-02)
     const moods = await prisma.mood.findMany({
       where: { coupleId },
-      select: { userId: true, mood: true },
+      select: { userId: true, mood: true, note: true },
     });
-    const myMood = moods.find((m) => m.userId === userId)?.mood || '';
-    const partnerMood = moods.find((m) => m.userId !== userId)?.mood || '';
+    const myMoodObj = moods.find((m) => m.userId === userId);
+    const partnerMoodObj = moods.find((m) => m.userId !== userId);
+    const myMood = myMoodObj?.mood || '';
+    const myMoodNote = myMoodObj?.note || '';
+    const partnerMood = partnerMoodObj?.mood || '';
+    const partnerMoodNote = partnerMoodObj?.note || '';
 
     // Fetch the most recently DELIVERED reason (the real "today's" reason)
     const lastDeliveredReason = await prisma.loveReason.findFirst({
@@ -113,20 +157,8 @@ export const getHomeData = async (req: Request, res: Response, next: NextFunctio
       select: { reason: true },
     });
 
-    // The partner's LoveBot send time tells us when YOU will receive it. In the
-    // current model, each user controls their OWN lovebot time and it specifies
-    // when their partner gets pinged — so to know when *I* get one, look at my
-    // partner's configured time.
-    const isCreator = couple.userAId === userId;
-    const senderTime = isCreator ? couple.userBLoveBotTime : couple.userALoveBotTime;
-
     // Daily thought — Gemini-generated perseverance reflection that complements
-    // (rather than duplicates) the LoveBot's "Today's Reason." The generator
-    // handles its own Redis caching with an IST date key, so this call hits
-    // Gemini at most once per couple per day and serves cache on every other
-    // Home open. Falls back to an inline bank when Gemini is unavailable; the
-    // bank result is intentionally NOT cached so a brief Gemini hiccup
-    // doesn't lock the couple into a fallback for the rest of the day.
+    // (rather than duplicates) the LoveBot's "Today's Reason."
     const dailyThought = await generateDailyThought({
       coupleId,
       user1Name: couple.userA?.name ?? 'You',
@@ -139,7 +171,9 @@ export const getHomeData = async (req: Request, res: Response, next: NextFunctio
     res.json({
       daysTogether,
       myMood,
+      myMoodNote,
       partnerMood,
+      partnerMoodNote,
       couplePhoto: couple.couplePhoto,
       todaysReason: lastDeliveredReason?.reason || null,
       nextReasonText: nextQueuedReason?.reason || null,

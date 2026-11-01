@@ -7,6 +7,7 @@ import {
   getProfile,
   updateProfile,
   leaveSpace,
+  deleteAccount,
   updateFcmToken,
   updateAvatar,
   deleteAvatar,
@@ -35,6 +36,9 @@ const otpConfirmLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// Account deletion — auth-only (no couple required, lets orphaned partners delete their account)
+router.delete('/account', verifyJWT, deleteAccount);
 
 // FCM token registration — only requires auth, not a couple
 router.put('/fcm-token', verifyJWT, updateFcmToken);

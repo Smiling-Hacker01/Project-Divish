@@ -8,6 +8,7 @@ import {
   signAccessToken,
   signRefreshToken,
   signTempToken,
+  verifyAccessToken,
   verifyRefreshToken,
 } from '../utils/jwt';
 import { generateCoupleCode } from '../utils/coupleCode';
@@ -60,13 +61,8 @@ export const signup = async (req: Request, res: Response, next: NextFunction): P
     }
     const { name, email, password, anniversaryDate } = parsed.data;
 
-    logger.info({ email, passwordLength: password.length }, '[Auth][DEBUG] Signup - hashing password');
-
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-
-    // Immediately verify the hash is correct (debug safety check)
-    const verifyHash = await bcrypt.compare(password, passwordHash);
-    logger.info({ verifyHash, hashPrefix: passwordHash.substring(0, 7) }, '[Auth][DEBUG] Signup - hash verification');
+    logger.info({ email }, '[Auth] Signup - password hashed');
 
     const coupleCode = await generateUniqueCoupleCode();
 
@@ -319,19 +315,15 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
     }
     const { email, password } = parsed.data;
 
-    logger.info({ email, passwordLength: password?.length }, '[Auth][DEBUG] Login attempt');
+    logger.info({ email }, '[Auth] Login attempt');
 
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
-      logger.warn({ email }, '[Auth][DEBUG] User not found for email');
       res.status(401).json({ error: 'Invalid credentials' });
       return;
     }
 
-    logger.info({ userId: user.id, hashPrefix: user.passwordHash.substring(0, 7) }, '[Auth][DEBUG] User found, comparing password');
-
     const valid = await bcrypt.compare(password, user.passwordHash);
-    logger.info({ valid }, '[Auth][DEBUG] bcrypt.compare result');
     if (!valid) {
       res.status(401).json({ error: 'Invalid credentials' });
       return;
@@ -367,6 +359,27 @@ export const enrollFace = async (req: Request, res: Response, next: NextFunction
     if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
       res.status(401).json({ error: 'Invalid credentials' });
       return;
+    }
+
+    const existing = await prisma.faceDescriptor.findUnique({ where: { userId: user.id } });
+    if (existing) {
+      // Re-enrollment of an existing face requires an active full authenticated session (SEC-04)
+      const authHeader = req.headers.authorization;
+      let isAuthorized = false;
+      if (authHeader?.startsWith('Bearer ')) {
+        try {
+          const decoded = verifyAccessToken(authHeader.split(' ')[1]);
+          if (decoded.userId === user.id) {
+            isAuthorized = true;
+          }
+        } catch {
+          // not authorized
+        }
+      }
+      if (!isAuthorized) {
+        res.status(403).json({ error: 'Face already enrolled. Modifying biometric enrollment requires an active authenticated session.' });
+        return;
+      }
     }
 
     const descriptor = await extractDescriptor(faceImage);
@@ -443,7 +456,7 @@ export const otpRequest = async (req: Request, res: Response, next: NextFunction
 };
 
 // ── POST /api/auth/otp-verify ──────────────────────────────────────────────────
-// MFA Step 2 fallback: verify OTP → issue full tokens
+// MFA Step 2 fallback: verify OTP → issue full tokens with brute-force lockout (SEC-03)
 export const otpVerify = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { userId, email } = req.tempUser!;
@@ -455,17 +468,34 @@ export const otpVerify = async (req: Request, res: Response, next: NextFunction)
     }
     const { otp } = parsed.data;
 
+    const failKey = `otp_attempts:${userId}`;
+    const attempts = await redis.incr(failKey);
+    if (attempts === 1) {
+      await redis.expire(failKey, 600); // 10 minute tracking window
+    }
+    if (attempts > 3) {
+      await redis.del(`otp:${userId}`);
+      res.status(429).json({ error: 'Too many failed OTP attempts. Code has been invalidated. Please request a new one.' });
+      return;
+    }
+
     const stored = await redis.get(`otp:${userId}`);
     if (!stored) {
-      res.status(410).json({ error: 'OTP expired. Request a new one.' });
+      res.status(410).json({ error: 'OTP expired or invalidated. Request a new one.' });
       return;
     }
     if (stored !== otp) {
-      res.status(401).json({ error: 'Invalid OTP' });
+      const remaining = 3 - attempts;
+      res.status(401).json({
+        error: remaining > 0
+          ? `Invalid OTP. ${remaining} attempt(s) remaining.`
+          : 'Invalid OTP. Code has been invalidated.',
+      });
       return;
     }
 
     await redis.del(`otp:${userId}`);
+    await redis.del(failKey);
 
     const accessToken = signAccessToken({ userId, email });
     const refreshToken = signRefreshToken({ userId, email });
