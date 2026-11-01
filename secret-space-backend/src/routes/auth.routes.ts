@@ -34,6 +34,15 @@ const otpLimiter = rateLimit({
     legacyHeaders: false,
 });
 
+// Strict rate limit on OTP verification attempts — prevent brute force (SEC-03)
+const otpVerifyLimiter = rateLimit({
+    windowMs: 10 * 60 * 1000,
+    max: 5,
+    message: { error: 'Too many OTP verification attempts. Please wait 10 minutes.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
 // ── Public routes ──────────────────────────────────────────────────────────────
 router.post('/signup', authLimiter, signup);
 router.post('/join', authLimiter, join);
@@ -45,7 +54,7 @@ router.post('/login', authLimiter, login);
 // ── MFA Step 2 — requires temp token issued by /login ─────────────────────────
 router.post('/face-verify', verifyTempJWT, faceVerify);   // Primary: face
 router.post('/otp-request', otpLimiter, verifyTempJWT, otpRequest); // Fallback: trigger OTP
-router.post('/otp-verify', verifyTempJWT, otpVerify);     // Fallback: verify OTP
+router.post('/otp-verify', otpVerifyLimiter, verifyTempJWT, otpVerify);     // Fallback: verify OTP
 
 // ── Protected — requires full JWT ─────────────────────────────────────────────
 router.post('/enroll-face', enrollFace); // No JWT needed — uses userId+password from body

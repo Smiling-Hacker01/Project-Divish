@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { sendEmail } from '../emails';
 import { otpEmail } from '../emails/templates';
 
@@ -13,7 +14,7 @@ import { otpEmail } from '../emails/templates';
  */
 
 export const generateOtp = (): string =>
-  String(Math.floor(100000 + Math.random() * 900000)); // 6-digit
+  crypto.randomInt(100000, 1000000).toString(); // 6-digit CSPRNG
 
 export const OTP_EXPIRY_MINUTES = 10;
 

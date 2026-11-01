@@ -3,6 +3,7 @@ import logger from '../config/logger';
 
 const JWT_SECRET = process.env.JWT_SECRET!;
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET!;
+const JWT_TEMP_SECRET = process.env.JWT_TEMP_SECRET || `${JWT_SECRET}_temp_mfa_signing_key_secret_2026!`;
 const JWT_EXPIRY = process.env.JWT_EXPIRY || '7d';
 const JWT_REFRESH_EXPIRY = process.env.JWT_REFRESH_EXPIRY || '30d';
 
@@ -33,6 +34,7 @@ export const validateJwtConfig = (): void => {
   for (const [name, value] of [
     ['JWT_SECRET', JWT_SECRET],
     ['JWT_REFRESH_SECRET', JWT_REFRESH_SECRET],
+    ['JWT_TEMP_SECRET', JWT_TEMP_SECRET],
   ] as const) {
     if (!value || value.length < 32) {
       logger.fatal(`${name} must be at least 32 characters long. Current length: ${value?.length ?? 0}`);
@@ -44,8 +46,8 @@ export const validateJwtConfig = (): void => {
     }
   }
 
-  if (JWT_SECRET === JWT_REFRESH_SECRET) {
-    logger.fatal('JWT_SECRET and JWT_REFRESH_SECRET must be different values.');
+  if (JWT_SECRET === JWT_REFRESH_SECRET || JWT_SECRET === JWT_TEMP_SECRET) {
+    logger.fatal('JWT secrets (JWT_SECRET, JWT_REFRESH_SECRET, JWT_TEMP_SECRET) must be different values.');
     process.exit(1);
   }
 };
@@ -58,16 +60,21 @@ export const signRefreshToken = (payload: JwtPayload): string =>
 
 // Issued after password check passes — only valid for face-verify or otp-verify
 export const signTempToken = (payload: Omit<TempTokenPayload, 'type'>): string =>
-  jwt.sign({ ...payload, type: 'temp_mfa' }, JWT_SECRET, { expiresIn: '10m' as any });
+  jwt.sign({ ...payload, type: 'temp_mfa' }, JWT_TEMP_SECRET, { expiresIn: '10m' as any });
 
-export const verifyAccessToken = (token: string): JwtPayload =>
-  jwt.verify(token, JWT_SECRET) as JwtPayload;
+export const verifyAccessToken = (token: string): JwtPayload => {
+  const decoded = jwt.verify(token, JWT_SECRET) as any;
+  if (decoded.type === 'temp_mfa') {
+    throw new Error('Temporary MFA token cannot be used as an access token');
+  }
+  return decoded as JwtPayload;
+};
 
 export const verifyRefreshToken = (token: string): JwtPayload =>
   jwt.verify(token, JWT_REFRESH_SECRET) as JwtPayload;
 
 export const verifyTempToken = (token: string): TempTokenPayload => {
-  const decoded = jwt.verify(token, JWT_SECRET) as TempTokenPayload;
+  const decoded = jwt.verify(token, JWT_TEMP_SECRET) as TempTokenPayload;
   if (decoded.type !== 'temp_mfa') throw new Error('Invalid token type');
   return decoded;
 };
