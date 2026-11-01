@@ -8,6 +8,7 @@ const mockApi = {
 };
 
 jest.mock('expo-crypto', () => ({
+  randomUUID: () => '11111111-1111-4111-8111-111111111111',
   getRandomBytesAsync: async (size: number) => {
     const bytes = new Uint8Array(size);
     for (let i = 0; i < size; i += 1) bytes[i] = (i * 47 + 23) & 0xff;

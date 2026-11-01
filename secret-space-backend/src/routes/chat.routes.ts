@@ -251,7 +251,7 @@ router.post('/devices/:deviceId/revoke', verifyJWT, async (req, res) => {
 });
 
 const epochSchema = z.object({
-  requestId: z.string().uuid(),
+  requestId: z.string().trim().min(1).max(100),
   envelopes: z.array(z.object({
     deviceId: z.string().uuid(),
     keyVersion: z.number().int().positive(),
