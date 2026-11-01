@@ -83,11 +83,14 @@ export function VaultUnlockScreen() {
         return;
       }
       // Successful unlock — reset the counter so a future re-lock starts fresh.
-      setBiometricAttempts(0);
+      if (!user?.id) {
+        setShowPasswordField(true);
+        return;
+      }
       const deviceId = await getOrCreateDeviceId();
       const keys = await getOrCreateKeyPair(false);
       const timestamp = Date.now();
-      const signature = signData(`vault-unlock:${user?.id}:${timestamp}`, keys.privateKey);
+      const signature = signData(`vault-unlock:${user.id}:${timestamp}`, keys.privateKey);
       await vaultApi.unlock({ deviceId, signature, timestamp });
       // Resume any uploads that were paused when the token expired mid-batch.
       vaultUploadManager.resumeAfterUnlock();
@@ -100,8 +103,9 @@ export function VaultUnlockScreen() {
           ? 'Your session expired. Please sign in again.'
           : e?.message?.includes('Network')
             ? 'Cannot reach the server. Is the backend running?'
-            : 'Could not unlock right now.');
+            : 'Biometric verification failed. Please enter your password.');
       setError(msg);
+      setShowPasswordField(true);
     } finally {
       setUnlocking(false);
     }

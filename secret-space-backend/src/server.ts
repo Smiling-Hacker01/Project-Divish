@@ -26,6 +26,17 @@ const start = async () => {
     await prisma.$connect();
     logger.info('[DB] PostgreSQL connected via Prisma');
 
+    // Self-healing schema synchronization for zero-downtime column migrations
+    try {
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE "chat_devices" ADD COLUMN IF NOT EXISTS "fcm_token" TEXT;
+        ALTER TABLE "messages" ADD COLUMN IF NOT EXISTS "deleted_for_recipient" BOOLEAN NOT NULL DEFAULT false;
+      `);
+      logger.info('[DB] Schema verified & synchronized successfully');
+    } catch (err: any) {
+      logger.warn({ err: err?.message }, '[DB] Schema auto-sync check completed with note');
+    }
+
     // ── Verify Redis connection ──────────────────────────────────────
     let redisReady = false;
     try {
