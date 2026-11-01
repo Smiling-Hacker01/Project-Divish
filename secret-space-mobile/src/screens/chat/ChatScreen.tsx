@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  AlertButton,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -962,6 +963,44 @@ export function ChatScreen() {
     );
   };
 
+  const handleWaitingPress = useCallback((msg: ChatMessage) => {
+    const unreadableMessages = visibleMessages.filter((m) => {
+      const p = decryptedCache[m.id];
+      return p === '__LOCKED__' || p === '__DECRYPTION_FAILED__';
+    });
+
+    const buttons: AlertButton[] = [
+      {
+        text: 'Remove from chat',
+        style: 'destructive',
+        onPress: () => addLocalHide(msg.id),
+      },
+    ];
+
+    if (unreadableMessages.length > 1) {
+      buttons.push({
+        text: `Remove all (${unreadableMessages.length})`,
+        style: 'destructive',
+        onPress: () => {
+          setHiddenIds((prev) => {
+            const next = new Set(prev);
+            unreadableMessages.forEach((m) => next.add(m.id));
+            AsyncStorage.setItem(LOCAL_HIDDEN_KEY, JSON.stringify(Array.from(next))).catch(() => {});
+            return next;
+          });
+        },
+      });
+    }
+
+    buttons.push({ text: 'Keep waiting', style: 'cancel' });
+
+    Alert.alert(
+      'Waiting for this message',
+      `This message is end-to-end encrypted.\n\nIt is waiting for your partner's device to connect and synchronize keys.\n\nIf this was sent before a fresh reinstall and you no longer need it, you can remove it from your chat.`,
+      buttons
+    );
+  }, [visibleMessages, decryptedCache]);
+
   // ── Attachments (unchanged transports) ───────────────────────────────────────
   // Image/video/file go via Cloudinary URL with no encryption — matches web's behavior
   // (web doesn't support media attachments via the encrypted path).
@@ -1474,6 +1513,7 @@ export function ChatScreen() {
               onMenu={() => setActionFor(item)}
               onRetry={() => retryEntry(item.id)}
               onDeleteFailed={() => removeFailed(item.id)}
+              onWaitingPress={() => handleWaitingPress(item)}
             />
           )}
         />
@@ -1851,6 +1891,7 @@ function Bubble({
   onMenu,
   onRetry,
   onDeleteFailed,
+  onWaitingPress,
 }: {
   msg: ChatMessage;
   mineId?: string;
@@ -1860,9 +1901,11 @@ function Bubble({
   onMenu: () => void;
   onRetry: () => void;
   onDeleteFailed: () => void;
+  onWaitingPress?: () => void;
 }) {
   const theme = useTheme();
   const mine = msg.senderId === mineId;
+  const isWaiting = plaintext === '__LOCKED__' || plaintext === '__DECRYPTION_FAILED__';
 
   if (msg.deletedForEveryone) {
     const ts = msg.deletedAt ? new Date(msg.deletedAt) : new Date(msg.createdAt);
@@ -1951,7 +1994,6 @@ function Bubble({
     // If a message is still awaiting its key session or envelope synchronization,
     // show WhatsApp's exact copy: "Waiting for this message. This may take a while."
     // with a clock icon instead of technical "failed to decrypt" or "locked" errors.
-    const isWaiting = plaintext === '__LOCKED__' || plaintext === '__DECRYPTION_FAILED__';
     if (isWaiting) {
       inner = (
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 2 }}>
@@ -1998,6 +2040,7 @@ function Bubble({
 
   return (
     <Pressable
+      onPress={isWaiting ? onWaitingPress : undefined}
       onLongPress={onLongPress}
       delayLongPress={200}
       style={{ alignItems: mine ? 'flex-end' : 'flex-start' }}
