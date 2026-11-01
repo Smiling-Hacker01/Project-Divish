@@ -278,7 +278,12 @@ router.post('/epochs', verifyJWT, async (req, res) => {
     return;
   }
   const activeDevices = await prisma.device.findMany({
-    where: { userId: { in: [couple.userAId, couple.userBId] }, status: 'active', revokedAt: null },
+    where: {
+      userId: { in: [couple.userAId, couple.userBId] },
+      status: 'active',
+      revokedAt: null,
+      keys: { some: { revokedAt: null } },
+    },
     select: { id: true },
   });
   const activeIds = new Set(activeDevices.map((d) => d.id));
