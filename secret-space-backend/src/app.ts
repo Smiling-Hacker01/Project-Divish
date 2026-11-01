@@ -126,7 +126,8 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
-// ── Health check ───────────────────────────────────────────────────────────────
+// ── Health check & Root ping ────────────────────────────────────────────────
+app.all('/', (_req, res) => res.json({ status: 'ok', service: 'secret-space-backend' }));
 app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 // ── Global error handler (must be last) ───────────────────────────────────────
