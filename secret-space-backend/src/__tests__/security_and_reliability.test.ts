@@ -96,17 +96,37 @@ jest.mock('../config/prisma', () => ({
       findFirst: jest.fn(async ({ where }) => {
         for (const d of mockDb.devices.values()) {
           if (where.id && d.id !== where.id) continue;
-          if (where.userId && d.userId !== where.userId) continue;
+          if (where.userId && typeof where.userId === 'string' && d.userId !== where.userId) continue;
+          if (where.userId?.in && !where.userId.in.includes(d.userId)) continue;
           if (where.status && d.status !== where.status) continue;
           if (where.revokedAt === null && d.revokedAt !== null) continue;
-          return d;
+          return {
+            ...d,
+            keys: d.keys || [{ publicKey: d.publicKey || 'mock-key', keyVersion: 1, revokedAt: null }],
+          };
         }
         return null;
       }),
       findMany: jest.fn(async ({ where }) => {
-        return Array.from(mockDb.devices.values()).filter((d) => d.userId === where.userId);
+        return Array.from(mockDb.devices.values()).filter((d) => {
+          if (where.userId?.in && !where.userId.in.includes(d.userId)) return false;
+          if (where.userId && typeof where.userId === 'string' && d.userId !== where.userId) return false;
+          if (where.status && d.status !== where.status) return false;
+          if (where.revokedAt === null && d.revokedAt !== null) return false;
+          return true;
+        }).map((d) => ({
+          ...d,
+          keys: d.keys || [{ publicKey: d.publicKey || 'mock-key', keyVersion: 1, revokedAt: null }],
+        }));
       }),
-      findUnique: jest.fn(async ({ where }) => mockDb.devices.get(where.id) || null),
+      findUnique: jest.fn(async ({ where }) => {
+        const d = mockDb.devices.get(where.id);
+        if (!d) return null;
+        return {
+          ...d,
+          keys: d.keys || [{ publicKey: d.publicKey || 'mock-key', keyVersion: 1, revokedAt: null }],
+        };
+      }),
       count: jest.fn(async ({ where }) => {
         return Array.from(mockDb.devices.values()).filter(
           (d) =>
@@ -139,6 +159,29 @@ jest.mock('../config/prisma', () => ({
         }
         return { count };
       }),
+    },
+    conversationKeyEpoch: {
+      findMany: jest.fn(async ({ where }) => {
+        return [{ id: 'mock-epoch-1', version: 1, status: 'active', coupleId: where?.coupleId, envelopes: [{ deviceId: 'dev-1' }] }];
+      }),
+      findFirst: jest.fn(async () => null),
+      findUnique: jest.fn(async ({ where }) => {
+        if (where?.coupleId_version) {
+          return { id: 'mock-epoch-1', version: where.coupleId_version.version, status: 'active', envelopes: [{ id: 'env-1' }] };
+        }
+        return null;
+      }),
+      updateMany: jest.fn(async () => ({ count: 1 })),
+      create: jest.fn(async ({ data }) => ({ id: 'mock-epoch-1', version: 1, ...data })),
+    },
+    conversationDeviceEnvelope: {
+      findMany: jest.fn(async () => []),
+      findUnique: jest.fn(async () => null),
+      upsert: jest.fn(async ({ create }) => ({ id: 'mock-env-1', ...create })),
+    },
+    deviceKey: {
+      findMany: jest.fn(async () => []),
+      updateMany: jest.fn(async () => ({ count: 1 })),
     },
     message: {
       findMany: jest.fn(async ({ where }) => {
@@ -547,6 +590,134 @@ describe('Project Divish — Security & Reliability Test Suite', () => {
       expect(mockDb.users.has(userB.id)).toBe(false);
       expect(coupleAB.userBId).toBeNull();
       expect(coupleAB.status).toBe('waiting');
+    });
+  });
+
+  describe('Finding REL-05: Real-Time Epoch History Sync, Re-Wrapping, and Boundary Verification', () => {
+    it('should accept non-UUID timestamp requestId and create epoch without 400 Bad Request', async () => {
+      const devActive = {
+        id: crypto.randomUUID(),
+        userId: userA.id,
+        status: 'active',
+        name: 'Alice active phone',
+        revokedAt: null,
+        publicKey: 'mock-pub-key-a',
+      };
+      // Revoke any prior test devices so only devActive is active for this test
+      for (const d of mockDb.devices.values()) {
+        if (d.userId === userA.id || d.userId === userB.id) {
+          d.status = 'revoked';
+          d.revokedAt = new Date();
+        }
+      }
+      mockDb.devices.set(devActive.id, devActive);
+
+      // Re-link coupleAB for this test
+      coupleAB.userBId = userB.id;
+      coupleAB.status = 'active';
+      userA.coupleAsA = coupleAB;
+      mockDb.users.set(userA.id, userA);
+      mockDb.users.set(userB.id, userB);
+      mockDb.couples.set(coupleAB.id, coupleAB);
+
+      const tokenA = signAccessToken({ userId: userA.id, email: userA.email });
+      const res = await request(app)
+        .post('/api/chat/epochs')
+        .set('Authorization', `Bearer ${tokenA}`)
+        .set('X-Device-Id', devActive.id)
+        .send({
+          requestId: `custom-timestamp-${Date.now()}-0.123456`,
+          envelopes: [
+            {
+              deviceId: devActive.id,
+              keyVersion: 1,
+              wrappedEpochKey: 'test-wrapped-epoch-key-material',
+            },
+          ],
+        });
+
+      // Should succeed with 201 Created (not 400 Bad Request from strict UUID regex)
+      expect(res.status).toBe(201);
+      expect(res.body.epoch).toBeDefined();
+    });
+
+    it('should reject third party User C attempting to create an epoch for another couple', async () => {
+      const devC = {
+        id: crypto.randomUUID(),
+        userId: userC.id,
+        status: 'active',
+        name: 'Attacker phone',
+        revokedAt: null,
+      };
+      mockDb.devices.set(devC.id, devC);
+
+      const tokenC = signAccessToken({ userId: userC.id, email: userC.email });
+      const res = await request(app)
+        .post('/api/chat/epochs')
+        .set('Authorization', `Bearer ${tokenC}`)
+        .set('X-Device-Id', devC.id)
+        .send({
+          requestId: crypto.randomUUID(),
+          envelopes: [
+            {
+              deviceId: devC.id,
+              keyVersion: 1,
+              wrappedEpochKey: 'fake-key-material',
+            },
+          ],
+        });
+
+      // User C does not have an active couple, must be rejected with 409
+      expect(res.status).toBe(409);
+      expect(res.body.error).toContain('active couple is required');
+    });
+
+    it('should reject epoch envelope submission without an active device identity', async () => {
+      const tokenA = signAccessToken({ userId: userA.id, email: userA.email });
+      const res = await request(app)
+        .post('/api/chat/epochs/1/envelopes')
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({
+          deviceId: crypto.randomUUID(),
+          keyVersion: 1,
+          wrappedEpochKey: 'fake-wrapped-key',
+        });
+
+      // Missing or invalid X-Device-Id header must be rejected with 400
+      expect(res.status).toBe(400);
+    });
+
+    it('should allow active device to submit envelope for partner device and persist successfully', async () => {
+      const devAlice = {
+        id: crypto.randomUUID(),
+        userId: userA.id,
+        status: 'active',
+        name: 'Alice Active',
+        revokedAt: null,
+      };
+      const devBob = {
+        id: crypto.randomUUID(),
+        userId: userB.id,
+        status: 'active',
+        name: 'Bob New Device',
+        revokedAt: null,
+      };
+      mockDb.devices.set(devAlice.id, devAlice);
+      mockDb.devices.set(devBob.id, devBob);
+
+      const tokenA = signAccessToken({ userId: userA.id, email: userA.email });
+      const res = await request(app)
+        .post('/api/chat/epochs/1/envelopes')
+        .set('Authorization', `Bearer ${tokenA}`)
+        .set('X-Device-Id', devAlice.id)
+        .send({
+          deviceId: devBob.id,
+          keyVersion: 1,
+          wrappedEpochKey: 'encrypted-epoch-key-for-bob',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.envelope).toBeDefined();
     });
   });
 });
