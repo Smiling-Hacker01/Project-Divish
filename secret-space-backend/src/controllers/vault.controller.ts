@@ -75,7 +75,12 @@ const serializeItem = (item: {
 export const unlockVault = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const userId = req.user!.userId;
-    const { password } = req.body;
+    const { password, deviceId, signature, timestamp } = req.body;
+
+    if (!password && !(deviceId && signature && timestamp)) {
+      res.status(400).json({ error: 'Password or valid biometric device signature is required' });
+      return;
+    }
 
     if (password) {
       const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -86,6 +91,36 @@ export const unlockVault = async (req: Request, res: Response, next: NextFunctio
       const isValid = await bcrypt.compare(password, user.passwordHash);
       if (!isValid) {
         res.status(401).json({ error: 'Incorrect password' });
+        return;
+      }
+    } else if (deviceId && signature && timestamp) {
+      // Validate signature timestamp freshness (max 2 minutes clock skew)
+      const now = Date.now();
+      const ts = Number(timestamp);
+      if (isNaN(ts) || Math.abs(now - ts) > 120000) {
+        res.status(400).json({ error: 'Biometric signature timestamp expired or invalid' });
+        return;
+      }
+
+      // Verify device exists and is active for this user
+      const device = await prisma.device.findFirst({
+        where: { id: deviceId, userId, status: 'active', revokedAt: null },
+        include: { keys: { where: { revokedAt: null }, orderBy: { keyVersion: 'desc' }, take: 1 } },
+      });
+
+      if (!device || device.keys.length === 0) {
+        res.status(403).json({ error: 'Device not authorized for biometric vault unlock' });
+        return;
+      }
+
+      const activeKey = device.keys[0];
+      const pubKeyDer = Buffer.from(activeKey.publicKey, 'base64');
+      const verifier = crypto.createVerify('RSA-SHA256');
+      verifier.update(`vault-unlock:${userId}:${timestamp}`);
+      const isValid = verifier.verify({ key: pubKeyDer, format: 'der', type: 'spki' }, Buffer.from(signature, 'base64'));
+
+      if (!isValid) {
+        res.status(401).json({ error: 'Invalid biometric device signature' });
         return;
       }
     }
