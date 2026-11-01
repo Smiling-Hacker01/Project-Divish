@@ -156,6 +156,12 @@ export function ChatSocketProvider({ children }: { children: React.ReactNode }) 
     s.on('connect_error', (err) => {
       console.warn('[ChatSocket] connect_error', err?.message);
       setStatus('error');
+      // Retry connection after a short backoff (e.g. if device was still activating)
+      setTimeout(() => {
+        if (socketRef.current === s && !s.connected) {
+          s.connect();
+        }
+      }, 2500);
     });
 
     s.on('partner_presence', (data: { userId: string; status: 'online' | 'offline' }) => {

@@ -9,6 +9,7 @@ import {
 } from './encryption';
 import { getOrCreateDeviceId } from './deviceIdentity';
 import { getOrCreateKeyPair } from './cryptoIdentity';
+import * as Crypto from 'expo-crypto';
 
 export const CHAT_ENCRYPTION_V2 = '2';
 
@@ -81,7 +82,7 @@ export const createConversationEpoch = async (userId: string): Promise<EpochKey>
     keyVersion: recipient.keyVersion,
     wrappedEpochKey: await encryptAESKeyWithRSA(epochKey, recipient.publicKey),
   })));
-  const requestId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  const requestId = Crypto.randomUUID();
   const response = await chatApi.createEpoch(deviceId, { requestId, envelopes });
   const version = response.epoch?.version;
   if (!Number.isInteger(version)) throw new Error('Server returned an invalid epoch version');
