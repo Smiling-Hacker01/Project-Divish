@@ -1,0 +1,94 @@
+name: CI Quality Gatekeeper
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-checks:
+    name: Backend Lint, Typecheck & Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: secret-space-backend
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'npm'
+          cache-dependency-path: secret-space-backend/package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: TypeScript Typecheck
+        run: npx tsc --noEmit
+
+      - name: Run Backend Test Suite
+        env:
+          JWT_SECRET: ci_test_jwt_secret_key_1234567890_ci_env!
+          JWT_REFRESH_SECRET: ci_test_refresh_secret_key_1234567890_ci_env!
+          JWT_TEMP_SECRET: ci_test_temp_secret_key_1234567890_ci_env!
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/secret_space
+          REDIS_URL: redis://localhost:6379
+        run: npm test
+
+  mobile-checks:
+    name: Mobile Typecheck & Crypto Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: secret-space-mobile
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: 'npm'
+          cache-dependency-path: secret-space-mobile/package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: TypeScript Typecheck
+        run: npm run typecheck
+
+      - name: Run Cryptographic & Protocol Unit Tests
+        run: npm run test:crypto
+
+  ci-gate:
+    name: CI Gatekeeper (Required Status Check)
+    needs: [backend-checks, mobile-checks]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Verify All CI Checks Passed
+        run: |
+          if [ "${{ needs.backend-checks.result }}" != "success" ] || [ "${{ needs.mobile-checks.result }}" != "success" ]; then
+            echo "CI Quality Gate Failed: One or more prerequisite jobs failed or were cancelled."
+            echo "backend-checks: ${{ needs.backend-checks.result }}"
+            echo "mobile-checks: ${{ needs.mobile-checks.result }}"
+            exit 1
+          fi
+          echo "All CI quality checks successfully passed. Pull request is eligible for merge."
