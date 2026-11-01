@@ -16,6 +16,25 @@ export let io: SocketIOServer;
 // route emits through `io.to(...)` so other processes' clients receive them too.
 const connectedUsers = new Map<string, string>();
 
+/**
+ * Check if a user is online across all clustered Socket.IO instances using room socket fetching
+ * and Redis presence tracking (REL-02 fix).
+ */
+export async function isUserOnline(targetUserId: string): Promise<boolean> {
+  try {
+    const sockets = await io.in(`user:${targetUserId}`).fetchSockets();
+    if (sockets.length > 0) return true;
+  } catch {
+    // Fall back to Redis set
+  }
+  try {
+    const count = await redis.scard(`presence:${targetUserId}`);
+    return count > 0;
+  } catch {
+    return connectedUsers.has(targetUserId);
+  }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 async function unreadCountFor(userId: string, coupleId: string): Promise<number> {
@@ -97,6 +116,8 @@ export const initializeChatSockets = (server: HttpServer) => {
     const userId = socket.data.userId;
     const deviceId = socket.data.deviceId as string;
     connectedUsers.set(userId, socket.id);
+    await redis.sadd(`presence:${userId}`, socket.id).catch(() => undefined);
+    await redis.expire(`presence:${userId}`, 86400).catch(() => undefined);
     void prisma.device.update({ where: { id: deviceId }, data: { lastSeenAt: new Date() } }).catch(() => undefined);
     // Per-user room: lets us push targeted events (unread_count, etc.) regardless of which
     // process holds the socket.
@@ -116,15 +137,12 @@ export const initializeChatSockets = (server: HttpServer) => {
         socket.join(couple.id);
         logger.info({ userId, coupleId: couple.id }, '[Chat] User joined couple room');
 
-        // Presence: Broadcast online status to partner, and check partner status
+        // Presence: Broadcast online status to partner, and check partner status across cluster
         const partnerId = couple.userAId === userId ? couple.userBId : couple.userAId;
         if (partnerId) {
           socket.to(couple.id).emit('partner_presence', { userId, status: 'online' });
-          if (connectedUsers.has(partnerId)) {
-            socket.emit('partner_presence', { userId: partnerId, status: 'online' });
-          } else {
-            socket.emit('partner_presence', { userId: partnerId, status: 'offline' });
-          }
+          const partnerOnline = await isUserOnline(partnerId);
+          socket.emit('partner_presence', { userId: partnerId, status: partnerOnline ? 'online' : 'offline' });
 
           // Catch-up: any messages the partner sent while we were offline should flip to
           // `delivered` now that we're connected, and the partner's UI should learn about it.
@@ -277,7 +295,7 @@ export const initializeChatSockets = (server: HttpServer) => {
         if (couple) {
           const partnerId = couple.userAId === userId ? couple.userBId : couple.userAId;
           if (partnerId) {
-            const isPartnerOnline = connectedUsers.has(partnerId);
+            const isPartnerOnline = await isUserOnline(partnerId);
             if (!isPartnerOnline) {
               await sendPush(partnerId, message.sender.name, 'Sent a secure message 🔒', {
                 type: 'chat_message',
@@ -389,11 +407,18 @@ export const initializeChatSockets = (server: HttpServer) => {
         const couple = await prisma.couple.findUnique({ where: { id: coupleId } });
         const partnerId = couple?.userAId === userId ? couple?.userBId : couple?.userAId;
         if (partnerId) await emitUnreadCount(partnerId, coupleId);
-      } else if (data.type === 'for_me' && msg.senderId === userId) {
-        await prisma.message.update({
-          where: { id: data.messageId },
-          data: { deletedForSender: true, deletedAt: now },
-        });
+      } else if (data.type === 'for_me') {
+        if (msg.senderId === userId) {
+          await prisma.message.update({
+            where: { id: data.messageId },
+            data: { deletedForSender: true, deletedAt: now },
+          });
+        } else {
+          await prisma.message.update({
+            where: { id: data.messageId },
+            data: { deletedForRecipient: true, deletedAt: now },
+          });
+        }
         socket.emit('message_deleted', {
           messageId: data.messageId,
           type: 'for_me',
@@ -440,6 +465,9 @@ export const initializeChatSockets = (server: HttpServer) => {
           content: data.content,
           senderAesKey: data.senderAesKey,
           recipientAesKey: data.recipientAesKey,
+          encryptionVersion: data.encryptionVersion,
+          keyEpochVersion: data.keyEpochVersion,
+          wrappedContentKey: data.wrappedContentKey,
           editedAt,
         },
       });
@@ -448,12 +476,26 @@ export const initializeChatSockets = (server: HttpServer) => {
         messageId: data.messageId,
         content: data.content,
         senderAesKey: data.senderAesKey,
-          recipientAesKey: data.recipientAesKey,
-          encryptionVersion: data.encryptionVersion,
-          keyEpochVersion: data.keyEpochVersion,
-          wrappedContentKey: data.wrappedContentKey,
-          editedAt: editedAt.toISOString(),
+        recipientAesKey: data.recipientAesKey,
+        encryptionVersion: data.encryptionVersion,
+        keyEpochVersion: data.keyEpochVersion,
+        wrappedContentKey: data.wrappedContentKey,
+        editedAt: editedAt.toISOString(),
       });
+    });
+
+    // Handle socket disconnection cleanly across cluster
+    socket.on('disconnect', async () => {
+      connectedUsers.delete(userId);
+      await redis.srem(`presence:${userId}`, socket.id).catch(() => undefined);
+      const stillOnline = await isUserOnline(userId);
+      if (!stillOnline) {
+        const { coupleId } = socket.data;
+        if (coupleId) {
+          socket.to(coupleId).emit('partner_presence', { userId, status: 'offline' });
+        }
+      }
+      logger.info({ userId, socketId: socket.id }, '[Chat] User disconnected');
     });
   });
 };
