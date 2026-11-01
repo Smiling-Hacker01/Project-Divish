@@ -119,11 +119,7 @@ apiClient.interceptors.response.use(
     // (Vault unlock is fine to refresh because it uses the regular JWT.)
     if (url.includes('/auth/')) return Promise.reject(error);
 
-    if (error.response?.status === 403) {
-      await tokens.clearAll();
-      logoutHandler?.();
-      return Promise.reject(error);
-    }
+
 
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
