@@ -130,12 +130,14 @@ export const ensurePublicKeyRegistered = async (): Promise<void> => {
       keyVersion: getDeviceKeyVersion(),
       name: 'Android device',
     });
-    // The first installation is explicitly bootstrapped. Later installations remain
-    // pending until an already-active device approves their one-time challenge.
-    const bootstrap = await chatApi.bootstrapDevice(deviceId).catch(() => null);
-    // Keep the legacy field only for the explicitly trusted first/current device.
-    // A pending second device must never replace User.publicKey, or it would
-    // recreate the previous-device decryption failure for existing clients.
+    // The first installation is explicitly bootstrapped. If previous devices exist
+    // from a prior installation, seamless takeover revokes the orphaned device
+    // and activates this device as primary (REL-01 fix).
+    let bootstrap = await chatApi.bootstrapDevice(deviceId).catch(() => null);
+    if (!bootstrap || bootstrap?.device?.status !== 'active') {
+      bootstrap = await chatApi.bootstrapDevice(deviceId, { takeover: true }).catch(() => null);
+    }
+
     if (bootstrap?.device?.status === 'active') {
       await chatApi.setPublicKey(publicKey);
     }

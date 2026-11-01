@@ -10,8 +10,8 @@ export const chatApi = {
     keyVersion: number;
     name?: string;
   }) => (await apiClient.post('/chat/devices', payload)).data,
-  bootstrapDevice: async (deviceId: string) =>
-    (await apiClient.post('/chat/devices/bootstrap', {}, { headers: { 'X-Device-Id': deviceId } })).data,
+  bootstrapDevice: async (deviceId: string, body: { takeover?: boolean } = {}) =>
+    (await apiClient.post('/chat/devices/bootstrap', body, { headers: { 'X-Device-Id': deviceId } })).data,
   requestPairingChallenge: async (deviceId: string) =>
     (await apiClient.post('/chat/devices/pairing-challenges', {}, { headers: { 'X-Device-Id': deviceId } })).data,
   approvePairing: async (deviceId: string, token: string) =>
