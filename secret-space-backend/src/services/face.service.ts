@@ -1,17 +1,21 @@
 import * as faceapi from 'face-api.js';
-import * as canvas from 'canvas';
-// Side-effect import: registers the native TensorFlow backend that face-api.js uses
-// for inference. Without it face-api falls back to a JS backend (or no backend at
-// all) and detection silently fails.
-import '@tensorflow/tfjs-node';
 import path from 'path';
 import { euclideanDistance, isFaceMatch } from '../utils/faceDistance';
 import logger from '../config/logger';
 
-// Patch face-api.js to use node-canvas
-const { Canvas, Image, ImageData } = canvas;
-// @ts-ignore
-faceapi.env.monkeyPatch({ Canvas, Image, ImageData });
+// Patch face-api.js to use node-canvas if available
+let canvasModule: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  canvasModule = require('canvas');
+  if (canvasModule) {
+    const { Canvas, Image, ImageData } = canvasModule;
+    // @ts-ignore
+    faceapi.env.monkeyPatch({ Canvas, Image, ImageData });
+  }
+} catch (err) {
+  logger.warn('[FaceService] Native canvas bindings not available in this environment');
+}
 
 let modelsLoaded = false;
 // In-flight promise dedup: if two face requests arrive before the first load completes,
@@ -53,8 +57,12 @@ export const extractDescriptor = async (base64Image: string): Promise<number[] |
   const base64Data = base64Image.replace(/^data:image\/\w+;base64,/, '');
   const buffer = Buffer.from(base64Data, 'base64');
 
-  const img = await canvas.loadImage(buffer);
-  const cvs = canvas.createCanvas(img.width, img.height);
+  if (!canvasModule) {
+    throw new Error('Canvas native module is unavailable in this environment');
+  }
+
+  const img = await canvasModule.loadImage(buffer);
+  const cvs = canvasModule.createCanvas(img.width, img.height);
   const ctx = cvs.getContext('2d');
   ctx.drawImage(img, 0, 0);
 
