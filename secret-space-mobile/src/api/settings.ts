@@ -14,6 +14,8 @@ export const settingsApi = {
   // CoupleCodeScreen since requireCouple-protected endpoints will now 403.
   leaveSpace: async () =>
     (await apiClient.post<{ success: boolean; message?: string }>('/settings/leave-space', {})).data,
+  deleteAccount: async () =>
+    (await apiClient.delete<{ success: boolean; message?: string }>('/settings/account')).data,
   deleteAvatar: async () =>
     (await apiClient.delete<{ success: boolean }>('/settings/avatar')).data,
   // Face MFA — disable or re-enroll while authenticated. Signup-time enrollment

@@ -64,8 +64,10 @@ export function SettingsScreen() {
   // requireCouple-protected route would now 403 for them.
   const onLeaveSpacePress = () => {
     Alert.alert(
-      'Close this space and delete your account?',
-      'This permanently deletes your account on this device, all your shared chats, diary entries, coupons, love notes, vault files, and avatar. Your email becomes free to re-register. This cannot be undone.',
+      user?.isCreator ? 'Close this space and delete your account?' : 'Leave this space and delete your account?',
+      user?.isCreator
+        ? 'This permanently deletes your account on this device, all your shared chats, diary entries, coupons, love notes, vault files, and avatar. Your email becomes free to re-register. This cannot be undone.'
+        : 'This permanently removes your account, unlinks you from this space, and frees your email to re-register. This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -74,23 +76,25 @@ export function SettingsScreen() {
           onPress: () => {
             Alert.alert(
               'Are you absolutely sure?',
-              `${user?.partnerName ?? 'Your partner'} will be notified and signed out. They keep their account but lose all shared data with you.`,
+              user?.isCreator
+                ? `${user?.partnerName ?? 'Your partner'} will be notified and signed out. They keep their account but lose all shared data with you.`
+                : 'You will be removed from this space immediately.',
               [
                 { text: 'Cancel', style: 'cancel' },
                 {
-                  text: 'Close and delete',
+                  text: 'Delete and leave',
                   style: 'destructive',
                   onPress: async () => {
                     try {
                       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => undefined);
-                      await settingsApi.leaveSpace();
+                      await settingsApi.deleteAccount();
                       // logout() clears chatQueue, diaryQueue, the RSA keypair, and
                       // unregisters push — the account is already gone server-side,
                       // this just clears the local tokens + caches.
                       await logout();
                     } catch (e: any) {
                       Alert.alert(
-                        'Could not close the space',
+                        'Could not process request',
                         e?.response?.data?.error ?? 'Please try again in a moment.'
                       );
                     }
@@ -267,15 +271,10 @@ export function SettingsScreen() {
         <SettingsSection label="Account">
           <SettingsRow title="Log out" titleColor="muted" onPress={logout} />
           <SettingsRow
-            title="Leave the space"
-            subtitle={
-              user?.isCreator
-                ? undefined
-                : 'Only your partner can close this space.'
-            }
+            title={user?.isCreator ? 'Dissolve space & delete account' : 'Leave space & delete account'}
+            subtitle="Permanently remove your account and data"
             titleColor="destructive"
-            disabled={!user?.isCreator}
-            onPress={user?.isCreator ? onLeaveSpacePress : undefined}
+            onPress={onLeaveSpacePress}
           />
         </SettingsSection>
       </ScrollView>

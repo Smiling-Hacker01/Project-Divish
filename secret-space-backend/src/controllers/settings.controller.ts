@@ -247,6 +247,61 @@ export const leaveSpace = async (req: Request, res: Response, next: NextFunction
   }
 };
 
+// ── DELETE /api/settings/account ───────────────────────────────────────────────
+// Allows any authenticated user (creator, partner, or orphaned user) to delete their account (ARCH-01 fix).
+export const deleteAccount = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const userId = req.user!.userId;
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        coupleAsA: true,
+        coupleAsB: true,
+      },
+    });
+
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    if (user.coupleAsA) {
+      // Creator: delete couple and user
+      const coupleId = user.coupleAsA.id;
+      try {
+        io?.to(coupleId).emit('space_dissolved', { coupleId, dissolvedBy: userId });
+      } catch {}
+      await prisma.$transaction(async (tx) => {
+        await tx.couple.delete({ where: { id: coupleId } });
+        await tx.user.delete({ where: { id: userId } });
+      });
+    } else if (user.coupleAsB) {
+      // Partner: unbind from couple and delete user
+      const coupleId = user.coupleAsB.id;
+      await prisma.$transaction(async (tx) => {
+        await tx.couple.update({
+          where: { id: coupleId },
+          data: { userBId: null, status: 'waiting' },
+        });
+        await tx.user.delete({ where: { id: userId } });
+      });
+      try {
+        io?.to(coupleId).emit('partner_left', { coupleId, partnerId: userId });
+      } catch {}
+    } else {
+      // Orphaned user with no couple: delete user directly
+      await prisma.user.delete({ where: { id: userId } });
+    }
+
+    await redis.del(`refresh:${userId}`).catch(() => undefined);
+    logger.info({ userId }, '[Settings] Account deleted successfully');
+    res.json({ success: true, message: 'Account deleted successfully' });
+  } catch (err) {
+    next(err);
+  }
+};
+
 // Best-effort Cloudinary publicId extractor — handles
 // https://res.cloudinary.com/<cloud>/image/upload/v<n>/<folder>/<file>.<ext>
 const publicIdFromCloudinaryUrl = (url: string): string | null => {
@@ -356,12 +411,21 @@ export const updateFcmToken = async (req: Request, res: Response, next: NextFunc
     }
     const token = raw === null || raw.length === 0 ? null : raw;
 
+    const deviceId = req.headers['x-device-id'] as string | undefined;
+
     await prisma.user.update({
       where: { id: userId },
       data: { fcmToken: token },
     });
 
-    logger.info({ userId, cleared: token === null }, '[Settings] FCM token updated');
+    if (deviceId) {
+      await prisma.device.updateMany({
+        where: { id: deviceId, userId },
+        data: { fcmToken: token },
+      }).catch(() => undefined);
+    }
+
+    logger.info({ userId, deviceId, cleared: token === null }, '[Settings] FCM token updated');
     res.json({ success: true });
   } catch (err) {
     next(err);

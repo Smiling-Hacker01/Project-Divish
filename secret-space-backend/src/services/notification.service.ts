@@ -34,44 +34,71 @@ export const sendPush = async (
     return { status: 'skipped', reason: 'firebase-not-configured' };
   }
 
-  let token: string | null = null;
+  const tokenMap = new Map<string, string | null>(); // token -> deviceId (null if user-level)
   try {
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { fcmToken: true },
+      select: {
+        fcmToken: true,
+        devices: {
+          where: { status: 'active', revokedAt: null, fcmToken: { not: null } },
+          select: { id: true, fcmToken: true },
+        },
+      },
     });
-    token = user?.fcmToken ?? null;
+
+    if (user?.fcmToken) {
+      tokenMap.set(user.fcmToken, null);
+    }
+    if (user?.devices) {
+      for (const dev of user.devices) {
+        if (dev.fcmToken) tokenMap.set(dev.fcmToken, dev.id);
+      }
+    }
   } catch (err: any) {
     logger.error({ err: err?.message, userId }, '[Notification] Token lookup failed');
     return { status: 'failed', error: err?.message ?? 'token-lookup-failed' };
   }
 
-  if (!token) {
+  if (tokenMap.size === 0) {
     logger.debug({ userId }, '[Notification] User has no FCM token — skipping');
     return { status: 'skipped', reason: 'no-token' };
   }
 
-  try {
-    await admin.messaging().send({
-      token,
-      notification: { title, body },
-      data,
-      android: { priority: 'high' },
-    });
-    logger.info({ userId }, '[Notification] Push sent');
-    return { status: 'sent' };
-  } catch (err: any) {
-    if (
-      err?.code === 'messaging/invalid-registration-token' ||
-      err?.code === 'messaging/registration-token-not-registered'
-    ) {
-      await prisma.user
-        .update({ where: { id: userId }, data: { fcmToken: null } })
-        .catch((e: any) => logger.warn({ err: e?.message, userId }, '[Notification] Failed to clear invalid token'));
-      logger.warn({ userId, code: err.code }, '[Notification] Invalid FCM token — cleared');
-      return { status: 'invalid-token' };
+  let sentCount = 0;
+  for (const [token, deviceId] of tokenMap.entries()) {
+    try {
+      await admin.messaging().send({
+        token,
+        notification: { title, body },
+        data,
+        android: { priority: 'high' },
+      });
+      sentCount++;
+    } catch (err: any) {
+      if (
+        err?.code === 'messaging/invalid-registration-token' ||
+        err?.code === 'messaging/registration-token-not-registered'
+      ) {
+        if (deviceId) {
+          await prisma.device
+            .update({ where: { id: deviceId }, data: { fcmToken: null } })
+            .catch(() => undefined);
+        } else {
+          await prisma.user
+            .update({ where: { id: userId }, data: { fcmToken: null } })
+            .catch(() => undefined);
+        }
+        logger.warn({ userId, deviceId, code: err.code }, '[Notification] Invalid FCM token — cleared');
+      } else {
+        logger.error({ err: err?.message, code: err?.code, userId }, '[Notification] Device push failed');
+      }
     }
-    logger.error({ err: err?.message, code: err?.code, userId }, '[Notification] Push failed');
-    return { status: 'failed', error: err?.message ?? 'unknown' };
   }
+
+  if (sentCount > 0) {
+    logger.info({ userId, sentCount }, '[Notification] Push sent');
+    return { status: 'sent' };
+  }
+  return { status: 'failed', error: 'all-device-pushes-failed' };
 };
