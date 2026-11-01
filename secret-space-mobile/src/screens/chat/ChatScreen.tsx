@@ -1947,38 +1947,46 @@ function Bubble({
       </View>
     );
   } else {
-    // Text bubble — three states:
-    //   - plaintext set, not __LOCKED__: render normally
-    //   - plaintext set to the __LOCKED__ sentinel: render the friendly
-    //     "Locked. Sent from a previous device." copy in italic + muted
-    //     styling. No scary lock emoji, no "decryption error" wording —
-    //     the failure is honestly communicated as a key-rotation artifact
-    //     rather than as something broken.
-    //   - plaintext undefined: still decrypting, show italic placeholder.
-    const locked = plaintext === '__LOCKED__';
-    const failed = plaintext === '__DECRYPTION_FAILED__';
-    const text = locked
-      ? 'Locked. Sent from a previous device.'
-      : failed
-        ? 'Secure message unavailable.'
-      : plaintext !== undefined
-        ? plaintext
-        : msg.content === null
-          ? ''
-          : 'Decrypting…';
-    const isPlaceholder = locked || failed || (plaintext === undefined && msg.content !== null);
-    inner = (
-      <Text
-        variant="body"
-        style={{
-          color: mine ? '#fff' : theme.colors.foreground,
-          fontStyle: isPlaceholder ? 'italic' : 'normal',
-          opacity: isPlaceholder ? 0.7 : 1,
-        }}
-      >
-        {text}
-      </Text>
-    );
+    // Text bubble — matches WhatsApp convention:
+    // If a message is still awaiting its key session or envelope synchronization,
+    // show WhatsApp's exact copy: "Waiting for this message. This may take a while."
+    // with a clock icon instead of technical "failed to decrypt" or "locked" errors.
+    const isWaiting = plaintext === '__LOCKED__' || plaintext === '__DECRYPTION_FAILED__';
+    if (isWaiting) {
+      inner = (
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 2 }}>
+          <Feather
+            name="clock"
+            size={13}
+            color={mine ? 'rgba(255,255,255,0.7)' : theme.colors.muted}
+            style={{ marginRight: 6 }}
+          />
+          <Text
+            variant="bodySmall"
+            style={{
+              color: mine ? 'rgba(255,255,255,0.85)' : theme.colors.muted,
+              fontStyle: 'italic',
+            }}
+          >
+            Waiting for this message. This may take a while.
+          </Text>
+        </View>
+      );
+    } else {
+      const isPending = plaintext === undefined && msg.content !== null;
+      inner = (
+        <Text
+          variant="body"
+          style={{
+            color: mine ? '#fff' : theme.colors.foreground,
+            fontStyle: isPending ? 'italic' : 'normal',
+            opacity: isPending ? 0.7 : 1,
+          }}
+        >
+          {plaintext !== undefined ? plaintext : msg.content === null ? '' : 'Decrypting…'}
+        </Text>
+      );
+    }
   }
 
   const reactionEntries = Object.entries(msg.reactions ?? {});
