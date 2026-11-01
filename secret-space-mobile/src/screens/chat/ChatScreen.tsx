@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  AlertButton,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -62,7 +63,7 @@ type SendStatus = 'queued' | 'failed';
 export function ChatScreen() {
   const theme = useTheme();
   const { user } = useAuth();
-  const { socket, status: socketStatus, partnerOnline, resetUnread } = useChatSocket();
+  const { socket, status: socketStatus, partnerOnline, resetUnread, subscribeEpochUpdates } = useChatSocket();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -102,6 +103,23 @@ export function ChatScreen() {
   const [keypairCreatedAt, setKeypairCreatedAt] = useState<string | null | undefined>(undefined);
   const [partnerPubKey, setPartnerPubKey] = useState<string | null>(null);
   const [cryptoReady, setCryptoReady] = useState(false);
+
+  // Re-run decryption pump when epoch envelopes arrive via real-time socket sync
+  useEffect(() => {
+    return subscribeEpochUpdates(() => {
+      setDecryptedCache((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const [id, val] of Object.entries(next)) {
+          if (val === '__DECRYPTION_FAILED__' || val === '__LOCKED__') {
+            delete next[id];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    });
+  }, [subscribeEpochUpdates]);
 
   // ── Retry / queue state ──────────────────────────────────────────────────────
   // Mirror of the persistent chatQueue keyed by clientId — used by the UI to render
@@ -364,54 +382,35 @@ export function ChatScreen() {
       if (toDecrypt.length === 0) return;
 
       // Decrypt newest-first (the messages at the bottom of the list the user
-      // is actually looking at) and commit in small batches with a yield
-      // between them. decryptAESKeyWithRSA uses pure-JS node-forge RSA, which
-      // is synchronous and CPU-heavy: decrypting a large backlog in one tight
-      // loop monopolizes the single JS thread for tens of seconds, which froze
-      // navigation and touch when leaving the chat ("stuck, then recovers").
-      // Yielding (setTimeout 0) between batches lets the navigator, gesture
-      // handler, and renderer interleave, so the UI stays responsive while
-      // bubbles fill in progressively instead of all-at-once-after-a-freeze.
+      // is actually looking at) and commit in small parallel batches with a frame yield.
+      // Batching via Promise.all across non-blocking AES-GCM prevents lag and single-thread JS stalls.
       const ordered = [...toDecrypt].reverse();
-      const BATCH_SIZE = 6;
-      let batch: Record<string, string> = {};
-      let sinceYield = 0;
+      const CHUNK_SIZE = 8;
 
-      const commit = (updates: Record<string, string>) => {
-        if (cancelled || Object.keys(updates).length === 0) return;
-        setDecryptedCache((prev) => ({ ...prev, ...updates }));
-      };
-
-      for (const msg of ordered) {
+      for (let i = 0; i < ordered.length; i += CHUNK_SIZE) {
         if (cancelled) return;
-        const cached = getCachedDecryption(resolvedUser.id, msg, resolvedKeypairCreatedAt);
-        if (cached !== undefined) {
-          batch[msg.id] = cached;
-          if (++sinceYield >= BATCH_SIZE) {
-            commit(batch);
-            batch = {};
-            sinceYield = 0;
-            await new Promise((resolve) => setTimeout(resolve, 0));
-          }
-          continue;
-        }
-        const coordinated = await decryptOnce(
-          resolvedUser.id,
-          msg,
-          resolvedKeys.privateKey,
-          resolvedKeypairCreatedAt
+        const chunk = ordered.slice(i, i + CHUNK_SIZE);
+        const results = await Promise.all(
+          chunk.map(async (msg) => {
+            const cached = getCachedDecryption(resolvedUser.id, msg, resolvedKeypairCreatedAt);
+            if (cached !== undefined) return { id: msg.id, result: cached };
+            const coordinated = await decryptOnce(
+              resolvedUser.id,
+              msg,
+              resolvedKeys.privateKey,
+              resolvedKeypairCreatedAt
+            );
+            return { id: msg.id, result: coordinated };
+          })
         );
-        batch[msg.id] = coordinated;
-        if (++sinceYield >= BATCH_SIZE) {
-          commit(batch);
-          batch = {};
-          sinceYield = 0;
-          await new Promise((resolve) => setTimeout(resolve, 0));
+        if (cancelled) return;
+        const updates: Record<string, string> = {};
+        for (const r of results) {
+          updates[r.id] = r.result;
         }
+        setDecryptedCache((prev) => ({ ...prev, ...updates }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
       }
-
-      // Flush any trailing partial batch.
-      commit(batch);
     })();
 
     return () => {
@@ -425,10 +424,10 @@ export function ChatScreen() {
 
     const onReceive = (msg: ChatMessage & { clientId?: string | null }) => {
       // If this is our own message echoing back (replay from server, e.g. another
-      // device or after reconnect), reconcile by clientId.
+      // device or after reconnect), reconcile by clientId or id.
       if (msg.clientId && msg.senderId === user?.id) {
         setMessages((prev) =>
-          prev.map((m) => (m.id === msg.clientId ? { ...m, ...msg } : m))
+          prev.map((m) => (m.id === msg.clientId || m.id === msg.id ? { ...m, ...msg } : m))
         );
         // We may have already cached the plaintext under clientId — copy to server id.
         setDecryptedCache((prev) =>
@@ -964,6 +963,44 @@ export function ChatScreen() {
     );
   };
 
+  const handleWaitingPress = useCallback((msg: ChatMessage) => {
+    const unreadableMessages = visibleMessages.filter((m) => {
+      const p = decryptedCache[m.id];
+      return p === '__LOCKED__' || p === '__DECRYPTION_FAILED__';
+    });
+
+    const buttons: AlertButton[] = [
+      {
+        text: 'Remove from chat',
+        style: 'destructive',
+        onPress: () => addLocalHide(msg.id),
+      },
+    ];
+
+    if (unreadableMessages.length > 1) {
+      buttons.push({
+        text: `Remove all (${unreadableMessages.length})`,
+        style: 'destructive',
+        onPress: () => {
+          setHiddenIds((prev) => {
+            const next = new Set(prev);
+            unreadableMessages.forEach((m) => next.add(m.id));
+            AsyncStorage.setItem(LOCAL_HIDDEN_KEY, JSON.stringify(Array.from(next))).catch(() => {});
+            return next;
+          });
+        },
+      });
+    }
+
+    buttons.push({ text: 'Keep waiting', style: 'cancel' });
+
+    Alert.alert(
+      'Waiting for this message',
+      `This message is end-to-end encrypted.\n\nIt is waiting for your partner's device to connect and synchronize keys.\n\nIf this was sent before a fresh reinstall and you no longer need it, you can remove it from your chat.`,
+      buttons
+    );
+  }, [visibleMessages, decryptedCache]);
+
   // ── Attachments (unchanged transports) ───────────────────────────────────────
   // Image/video/file go via Cloudinary URL with no encryption — matches web's behavior
   // (web doesn't support media attachments via the encrypted path).
@@ -1476,6 +1513,7 @@ export function ChatScreen() {
               onMenu={() => setActionFor(item)}
               onRetry={() => retryEntry(item.id)}
               onDeleteFailed={() => removeFailed(item.id)}
+              onWaitingPress={() => handleWaitingPress(item)}
             />
           )}
         />
@@ -1853,6 +1891,7 @@ function Bubble({
   onMenu,
   onRetry,
   onDeleteFailed,
+  onWaitingPress,
 }: {
   msg: ChatMessage;
   mineId?: string;
@@ -1862,9 +1901,11 @@ function Bubble({
   onMenu: () => void;
   onRetry: () => void;
   onDeleteFailed: () => void;
+  onWaitingPress?: () => void;
 }) {
   const theme = useTheme();
   const mine = msg.senderId === mineId;
+  const isWaiting = plaintext === '__LOCKED__' || plaintext === '__DECRYPTION_FAILED__';
 
   if (msg.deletedForEveryone) {
     const ts = msg.deletedAt ? new Date(msg.deletedAt) : new Date(msg.createdAt);
@@ -1949,38 +1990,46 @@ function Bubble({
       </View>
     );
   } else {
-    // Text bubble — three states:
-    //   - plaintext set, not __LOCKED__: render normally
-    //   - plaintext set to the __LOCKED__ sentinel: render the friendly
-    //     "Locked. Sent from a previous device." copy in italic + muted
-    //     styling. No scary lock emoji, no "decryption error" wording —
-    //     the failure is honestly communicated as a key-rotation artifact
-    //     rather than as something broken.
-    //   - plaintext undefined: still decrypting, show italic placeholder.
-    const locked = plaintext === '__LOCKED__';
-    const failed = plaintext === '__DECRYPTION_FAILED__';
-    const text = locked
-      ? 'Locked. Sent from a previous device.'
-      : failed
-        ? 'Secure message unavailable.'
-      : plaintext !== undefined
-        ? plaintext
-        : msg.content === null
-          ? ''
-          : 'Decrypting…';
-    const isPlaceholder = locked || failed || (plaintext === undefined && msg.content !== null);
-    inner = (
-      <Text
-        variant="body"
-        style={{
-          color: mine ? '#fff' : theme.colors.foreground,
-          fontStyle: isPlaceholder ? 'italic' : 'normal',
-          opacity: isPlaceholder ? 0.7 : 1,
-        }}
-      >
-        {text}
-      </Text>
-    );
+    // Text bubble — matches WhatsApp convention:
+    // If a message is still awaiting its key session or envelope synchronization,
+    // show WhatsApp's exact copy: "Waiting for this message. This may take a while."
+    // with a clock icon instead of technical "failed to decrypt" or "locked" errors.
+    if (isWaiting) {
+      inner = (
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 2 }}>
+          <Feather
+            name="clock"
+            size={13}
+            color={mine ? 'rgba(255,255,255,0.7)' : theme.colors.muted}
+            style={{ marginRight: 6, marginTop: 2 }}
+          />
+          <Text
+            variant="bodySmall"
+            style={{
+              color: mine ? 'rgba(255,255,255,0.85)' : theme.colors.muted,
+              fontStyle: 'italic',
+              flexShrink: 1,
+            }}
+          >
+            Waiting for this message. This may take a while.
+          </Text>
+        </View>
+      );
+    } else {
+      const isPending = plaintext === undefined && msg.content !== null;
+      inner = (
+        <Text
+          variant="body"
+          style={{
+            color: mine ? '#fff' : theme.colors.foreground,
+            fontStyle: isPending ? 'italic' : 'normal',
+            opacity: isPending ? 0.7 : 1,
+          }}
+        >
+          {plaintext !== undefined ? plaintext : msg.content === null ? '' : 'Decrypting…'}
+        </Text>
+      );
+    }
   }
 
   const reactionEntries = Object.entries(msg.reactions ?? {});
@@ -1992,9 +2041,13 @@ function Bubble({
 
   return (
     <Pressable
+      onPress={isWaiting ? onWaitingPress : undefined}
       onLongPress={onLongPress}
       delayLongPress={200}
-      style={{ alignItems: mine ? 'flex-end' : 'flex-start' }}
+      style={({ pressed }) => [
+        { alignItems: mine ? 'flex-end' : 'flex-start' },
+        isWaiting && pressed && { opacity: 0.75 },
+      ]}
     >
       <View
         style={{

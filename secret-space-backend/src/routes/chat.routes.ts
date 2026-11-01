@@ -7,6 +7,7 @@ import { uploadBase64, uploadBuffer } from '../services/storage.service';
 import { chatUpload } from '../middlewares/chatUpload';
 import { createHash, randomBytes } from 'crypto';
 import { Prisma } from '@prisma/client';
+import { io } from '../websockets/chat.gateway';
 
 const router = Router();
 
@@ -140,6 +141,20 @@ router.post('/devices/bootstrap', verifyJWT, async (req, res) => {
     data: { status: 'active', revokedAt: null, lastSeenAt: new Date() },
     select: deviceSelect,
   });
+
+  try {
+    const coupleUser = await prisma.user.findUnique({
+      where: { id: req.user!.userId },
+      select: { coupleAsA: { select: { id: true } }, coupleAsB: { select: { id: true } } },
+    });
+    const coupleId = coupleUser?.coupleAsA?.id ?? coupleUser?.coupleAsB?.id;
+    if (coupleId && io) {
+      io.to(coupleId).emit('epoch_sync_needed', { deviceId: updated.id, userId: updated.userId });
+    }
+  } catch {
+    // Non-fatal if socket emission fails
+  }
+
   res.json({ device: updated });
 });
 
@@ -443,6 +458,18 @@ router.post('/epochs/:epochVersion/envelopes', verifyJWT, async (req, res) => {
     update: {},
     select: { id: true, epochId: true, deviceId: true, keyVersion: true, createdAt: true },
   });
+
+  try {
+    if (io && target.userId) {
+      io.to(`user:${target.userId}`).emit('epoch_envelopes_updated', {
+        epochVersion: version,
+        deviceId: target.id,
+      });
+    }
+  } catch {
+    // Non-fatal
+  }
+
   res.status(200).json({ envelope: result, alreadyExisted: Boolean(existingEnvelope) });
 });
 

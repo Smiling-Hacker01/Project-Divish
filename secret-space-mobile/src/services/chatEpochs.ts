@@ -8,7 +8,8 @@ import {
   generateAESKey,
 } from './encryption';
 import { getOrCreateDeviceId } from './deviceIdentity';
-import { getOrCreateKeyPair } from './cryptoIdentity';
+import { ensurePublicKeyRegistered, getOrCreateKeyPair } from './cryptoIdentity';
+import { invalidateFailedDecryptions } from './chatDecryption';
 import * as Crypto from 'expo-crypto';
 
 export const CHAT_ENCRYPTION_V2 = '2';
@@ -28,29 +29,37 @@ type DistributionStatus = {
 };
 
 const epochKeys = new Map<string, EpochKey>();
-const epochLoads = new Map<string, Promise<void>>();
+const epochLoads = new Map<string, Promise<number>>();
 
 const sessionKey = (userId: string, version: number) => `${userId}:${version}`;
 
-const loadOwnEnvelopes = async (userId: string): Promise<void> => {
+const loadOwnEnvelopes = async (userId: string): Promise<number> => {
   const envelopes = (await chatApi.epochEnvelopes(await getOrCreateDeviceId())).envelopes as EpochEnvelope[];
   const { privateKey } = await getOrCreateKeyPair(false);
+  let newlyDiscovered = 0;
   for (const envelope of envelopes) {
     if (!Number.isInteger(envelope.epoch?.version) || !envelope.wrappedEpochKey) continue;
+    const sKey = sessionKey(userId, envelope.epoch.version);
+    if (epochKeys.has(sKey)) continue;
     try {
       const epochKey = await decryptAESKeyWithRSA(envelope.wrappedEpochKey, privateKey);
-      epochKeys.set(sessionKey(userId, envelope.epoch.version), {
+      epochKeys.set(sKey, {
         epochVersion: envelope.epoch.version,
         epochKey,
       });
+      newlyDiscovered += 1;
     } catch {
       // A malformed/tampered envelope is ignored here. The caller reports the
       // absence of a usable key instead of falling back to an unrelated key.
     }
   }
+  if (newlyDiscovered > 0) {
+    invalidateFailedDecryptions(userId);
+  }
+  return newlyDiscovered;
 };
 
-export const refreshEpochKeys = async (userId: string): Promise<void> => {
+export const refreshEpochKeys = async (userId: string): Promise<number> => {
   const existing = epochLoads.get(userId);
   if (existing) return existing;
   const load = loadOwnEnvelopes(userId).finally(() => {
@@ -69,11 +78,19 @@ export const getEpochKey = async (userId: string, version: number): Promise<stri
 
 export const createConversationEpoch = async (userId: string): Promise<EpochKey> => {
   const deviceId = await getOrCreateDeviceId();
-  const recipients = (await chatApi.epochRecipients(deviceId)).recipients as Array<{
+  let recipients = (await chatApi.epochRecipients(deviceId)).recipients as Array<{
     id: string;
     publicKey: string;
     keyVersion: number;
   }>;
+  if (recipients.length === 0) {
+    await ensurePublicKeyRegistered().catch(() => undefined);
+    recipients = (await chatApi.epochRecipients(deviceId)).recipients as Array<{
+      id: string;
+      publicKey: string;
+      keyVersion: number;
+    }>;
+  }
   if (recipients.length === 0) throw new Error('No active devices are available for encryption');
 
   const epochKey = await generateAESKey();
@@ -87,6 +104,7 @@ export const createConversationEpoch = async (userId: string): Promise<EpochKey>
   const version = response.epoch?.version;
   if (!Number.isInteger(version)) throw new Error('Server returned an invalid epoch version');
   epochKeys.set(sessionKey(userId, version), { epochVersion: version, epochKey });
+  invalidateFailedDecryptions(userId);
   return { epochVersion: version, epochKey };
 };
 
@@ -102,24 +120,39 @@ export const getOrCreateConversationEpoch = async (userId: string): Promise<Epoc
 // foreground, reconnect, and chat open: the server's unique constraint makes the
 // operation idempotent and an unavailable local epoch key simply remains pending.
 export const distributeMissingEpochEnvelopes = async (userId: string): Promise<void> => {
-  const deviceId = await getOrCreateDeviceId();
-  const status = await chatApi.epochDistributionStatus(deviceId) as DistributionStatus;
-  for (const epoch of status.epochs) {
-    const epochKey = epochKeys.get(sessionKey(userId, epoch.version))?.epochKey;
-    if (!epochKey) continue;
-    for (const target of epoch.missingDevices) {
-      const wrappedEpochKey = await encryptAESKeyWithRSA(epochKey, target.publicKey);
-      await chatApi.submitEpochEnvelope(deviceId, epoch.version, {
-        deviceId: target.id,
-        keyVersion: target.keyVersion,
-        wrappedEpochKey,
-      });
+  try {
+    const deviceId = await getOrCreateDeviceId();
+    const status = (await chatApi.epochDistributionStatus(deviceId)) as DistributionStatus;
+    if (!status?.epochs) return;
+    for (const epoch of status.epochs) {
+      const epochKey = epochKeys.get(sessionKey(userId, epoch.version))?.epochKey;
+      if (!epochKey) continue;
+      for (const target of epoch.missingDevices) {
+        try {
+          const wrappedEpochKey = await encryptAESKeyWithRSA(epochKey, target.publicKey);
+          await chatApi.submitEpochEnvelope(deviceId, epoch.version, {
+            deviceId: target.id,
+            keyVersion: target.keyVersion,
+            wrappedEpochKey,
+          });
+        } catch {
+          // Idempotent upsert on backend ensures safe retries
+        }
+      }
     }
+  } catch {
+    // Non-fatal if offline
   }
 };
 
 export const encryptV2Text = async (userId: string, plaintext: string) => {
-  const epoch = await getOrCreateConversationEpoch(userId);
+  let epoch: EpochKey;
+  try {
+    epoch = await getOrCreateConversationEpoch(userId);
+  } catch {
+    await ensurePublicKeyRegistered().catch(() => undefined);
+    epoch = await getOrCreateConversationEpoch(userId);
+  }
   const contentKey = await generateAESKey();
   return {
     content: await encryptTextAES(plaintext, contentKey),

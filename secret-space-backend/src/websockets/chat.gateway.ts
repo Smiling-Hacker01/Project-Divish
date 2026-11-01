@@ -141,6 +141,7 @@ export const initializeChatSockets = (server: HttpServer) => {
         const partnerId = couple.userAId === userId ? couple.userBId : couple.userAId;
         if (partnerId) {
           socket.to(couple.id).emit('partner_presence', { userId, status: 'online' });
+          socket.to(couple.id).emit('epoch_sync_needed', { deviceId, userId });
           const partnerOnline = await isUserOnline(partnerId);
           socket.emit('partner_presence', { userId: partnerId, status: partnerOnline ? 'online' : 'offline' });
 
